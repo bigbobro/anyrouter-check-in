@@ -29,6 +29,7 @@ from utils.browser import (
 	navigate_login_page,
 	prepare_browser_page,
 	save_login_screenshot,
+	solve_waf_slider,
 	take_pending_screenshots,
 	verify_browser_login,
 	wait_for_waf_ready,
@@ -109,6 +110,7 @@ async def get_waf_cookies_with_browser(
 		print(f'[PROCESSING] {account_name}: Access login page to get initial cookies...')
 
 		await page.goto(login_url, wait_until='domcontentloaded')
+		await solve_waf_slider(page)
 		await wait_for_waf_ready(page)
 
 		cookies = await page.context.cookies()

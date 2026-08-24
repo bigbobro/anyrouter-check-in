@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import math
 import os
+import random
 import re
 import time
 from dataclasses import dataclass
@@ -53,6 +55,35 @@ FORM_ACTION_TIMEOUT_MS = 15_000
 EMAIL_TAB_TIMEOUT_MS = 8_000
 WAF_READY_TIMEOUT_MS = 30_000
 SESSION_WAIT_TIMEOUT_MS = 45_000
+
+SLIDER_HANDLE_SELECTORS = (
+	'#nc_1_n1z',
+	'span.btn_slide',
+	'.nc-container .btn_slide',
+	'span[id*="_n1z"]',
+	'div.nc_scale span.btn_slide',
+	'.nc_iconfont.btn_slide',
+	'#nc_2_n1z',
+	'[aria-label*="slide" i]',
+	'[class*="slide_btn" i]',
+	'div[id*="nc_"] span.btn_slide',
+)
+SLIDER_TRACK_SELECTORS = (
+	'#nc_1__scale_text',
+	'.nc_scale',
+	'div.nc_scale',
+	'div[id*="_scale"]',
+	'#nc_1_wrapper',
+	'.nc-container',
+	'#nocaptcha',
+)
+SLIDER_REFRESH_SELECTORS = (
+	'#nc_1_refresh1',
+	'.nc_scale .errloading a',
+	'a[href*="javascript:noCaptcha"]',
+	'span.nc_iconfont.icon_refresh',
+	'.errloading',
+)
 
 _VISIBLE_CHECK_JS = """
 	const isVisible = (el) => {
@@ -278,6 +309,116 @@ def take_pending_screenshots() -> list[Path]:
 	return paths
 
 
+async def solve_waf_slider(page: Page, max_retries: int = 3) -> bool:
+	"""检测并尝试通过阿里云 WAF / Access Verification 等滑块人机验证。"""
+	for attempt in range(max_retries):
+		handle_locator = None
+		for selector in SLIDER_HANDLE_SELECTORS:
+			loc = page.locator(selector).first
+			try:
+				if await loc.is_visible():
+					handle_locator = loc
+					break
+			except Exception:  # nosec B112
+				continue
+
+		if not handle_locator:
+			# 检查页面是否包含 Access Verification 等特征文字
+			has_waf_text = await page.evaluate("""() => {
+				const text = document.body?.innerText || '';
+				return /Access Verification|请进行验证|为了更好的访问体验|请向右滑动|verify you are human/i.test(text);
+			}""")
+			if not has_waf_text:
+				return False
+			await asyncio.sleep(1)
+			for selector in SLIDER_HANDLE_SELECTORS:
+				loc = page.locator(selector).first
+				try:
+					if await loc.is_visible():
+						handle_locator = loc
+						break
+				except Exception:  # nosec B112
+					continue
+			if not handle_locator:
+				return False
+
+		print(f'[WAF] Detected Access Verification slider (attempt {attempt + 1}/{max_retries}), attempting human-like slide...')
+
+		try:
+			box_handle = await handle_locator.bounding_box()
+			if not box_handle:
+				await asyncio.sleep(1)
+				continue
+
+			track_width = 300.0
+			for selector in SLIDER_TRACK_SELECTORS:
+				t_loc = page.locator(selector).first
+				try:
+					if await t_loc.is_visible():
+						t_box = await t_loc.bounding_box()
+						if t_box and t_box['width'] > 100:
+							track_width = t_box['width']
+							break
+				except Exception:  # nosec B112
+					continue
+
+			distance = max(track_width - box_handle['width'] + 10, 280.0)
+
+			start_x = box_handle['x'] + box_handle['width'] / 2
+			start_y = box_handle['y'] + box_handle['height'] / 2
+
+			await page.mouse.move(start_x, start_y)
+			await asyncio.sleep(random.uniform(0.1, 0.25))
+			await page.mouse.down()
+			await asyncio.sleep(random.uniform(0.05, 0.15))
+
+			steps = random.randint(25, 35)
+			for i in range(1, steps + 1):
+				t = i / steps
+				ease = (1.0 - math.cos(t * math.pi)) / 2.0
+				cur_x = start_x + distance * ease + random.uniform(-0.5, 0.5)
+				cur_y = start_y + random.uniform(-1.0, 1.0)
+				await page.mouse.move(cur_x, cur_y)
+				await asyncio.sleep(random.uniform(0.01, 0.025))
+
+			await page.mouse.move(start_x + distance + random.uniform(2, 6), start_y)
+			await asyncio.sleep(random.uniform(0.05, 0.12))
+			await page.mouse.up()
+
+			await asyncio.sleep(2)
+
+			passed = await page.evaluate("""() => {
+				const text = document.body?.innerText || '';
+				if (/验证通过|Successful|Passed/i.test(text)) return true;
+				const okIcon = document.querySelector('.nc_iconfont.icon_ok, .nc-lang-cnt, .nc_ok');
+				if (okIcon) return true;
+				const hasWaf = /Access Verification|请进行验证|为了更好的访问体验/i.test(text);
+				return !hasWaf;
+			}""")
+
+			if passed:
+				print(f'[WAF] Access Verification slider solved successfully (attempt {attempt + 1})')
+				await asyncio.sleep(2)
+				return True
+
+			for r_selector in SLIDER_REFRESH_SELECTORS:
+				r_loc = page.locator(r_selector).first
+				try:
+					if await r_loc.is_visible():
+						print('[WAF] Slider reload button detected, refreshing slider...')
+						await r_loc.click()
+						await asyncio.sleep(1.5)
+						break
+				except Exception:  # nosec B112
+					continue
+
+		except Exception as exc:
+			debug_print(f'[WAF] Slider solving exception on attempt {attempt + 1}: {exc}')
+			await asyncio.sleep(1)
+
+	return False
+
+
 async def prepare_browser_page(page: Page) -> None:
 	await setup_popup_guard(page)
 
@@ -286,9 +427,11 @@ async def wait_for_site_ready(page: Page, timeout_ms: int = WAF_READY_TIMEOUT_MS
 	"""等待 WAF 通过并关闭弹窗。"""
 	waf_timeout = min(timeout_ms, WAF_READY_TIMEOUT_MS)
 	await page.wait_for_load_state('domcontentloaded', timeout=waf_timeout)
+	await solve_waf_slider(page)
 	try:
 		await page.wait_for_function(_SITE_READY_JS, timeout=waf_timeout)
 	except Exception:
+		await solve_waf_slider(page)
 		await asyncio.sleep(3)
 	closed = await dismiss_popups(page)
 	if closed:
@@ -311,10 +454,17 @@ async def _settle_page(page: Page, delay_seconds: float, networkidle_timeout_ms:
 
 async def _wait_for_login_shell(page: Page, timeout_ms: int) -> bool:
 	shell_timeout = min(timeout_ms, 60_000)
+	await solve_waf_slider(page)
 	try:
 		await page.wait_for_function(_LOGIN_SHELL_READY_JS, timeout=shell_timeout)
 		return True
 	except Exception:  # nosec B110
+		if await solve_waf_slider(page):
+			try:
+				await page.wait_for_function(_LOGIN_SHELL_READY_JS, timeout=10_000)
+				return True
+			except Exception:  # nosec B110
+				pass
 		return False
 
 
@@ -337,6 +487,7 @@ async def navigate_login_page(
 		print(f'[INFO] Warming up {base_url} before login')
 		await page.goto(base_url, wait_until='load', timeout=attempt_timeout)
 		await _settle_page(page, 3, 15_000)
+		await solve_waf_slider(page)
 		closed = await dismiss_popups(page)
 		if closed:
 			print(f'[INFO] Dismissed {closed} popup dialog(s) during warmup')
@@ -347,11 +498,19 @@ async def navigate_login_page(
 		print(f'[INFO] Navigating login page (attempt {attempt + 1}/3): {login_url}')
 		await page.goto(login_url, wait_until='load', timeout=attempt_timeout)
 		await _settle_page(page, 5, 20_000)
+		await solve_waf_slider(page)
 
 		if await _wait_for_login_shell(page, attempt_timeout):
 			await wait_for_site_ready(page, timeout_ms)
 			if await page.evaluate(_LOGIN_SHELL_READY_JS):
 				return
+
+		# 如果一次没好，再次尝试滑块处理
+		if await solve_waf_slider(page):
+			if await _wait_for_login_shell(page, attempt_timeout):
+				await wait_for_site_ready(page, timeout_ms)
+				if await page.evaluate(_LOGIN_SHELL_READY_JS):
+					return
 
 		print(f'[WARN] Login page shell not ready on attempt {attempt + 1}')
 		await _log_login_page_state(page)

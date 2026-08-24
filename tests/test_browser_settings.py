@@ -98,3 +98,25 @@ async def test_launch_login_context_closes_browser_for_ephemeral_context(monkeyp
 	assert context.closed is True
 	assert browser.closed is True
 	assert not settings.profile_dir.exists()
+
+
+@pytest.mark.asyncio
+async def test_solve_waf_slider_returns_false_when_no_slider(monkeypatch):
+	from utils.browser import solve_waf_slider
+
+	class FakePage:
+		def locator(self, selector):
+			class FakeLocator:
+				def first(self):
+					return self
+
+				async def is_visible(self):
+					return False
+
+			return FakeLocator()
+
+		async def evaluate(self, js):
+			return False
+
+	assert await solve_waf_slider(FakePage()) is False
+
