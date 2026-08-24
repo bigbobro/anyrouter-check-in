@@ -96,15 +96,15 @@ class AppConfig:
 			),
 			'agentrouter': ProviderConfig(
 				name='agentrouter',
-				domain='https://agentrouter.org',
+				domain='https://ps.air-outer.com',
 				login_path='/login',
-				sign_in_path=None,  # 无需签到接口，查询用户信息时自动完成签到
+				sign_in_path=None,  # 登录时自动完成签到
 				user_info_path='/api/user/self',
 				api_user_key='new-api-user',
 				bypass_method='waf_cookies',
 				waf_cookie_names=['acw_tc'],
-				use_proxy=True,
-				persist_profile=False,
+				use_proxy=False,
+				persist_profile=True,
 			),
 		}
 
