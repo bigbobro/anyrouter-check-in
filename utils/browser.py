@@ -169,6 +169,15 @@ _OPEN_EMAIL_FORM_JS = """() => {
 		}
 	}
 
+	for (const btn of document.querySelectorAll('.semi-card button')) {
+		if (!isVisible(btn) || inDialog(btn) || btn.closest('form.semi-form')) continue;
+		const t = (btn.innerText || '').toLowerCase();
+		if (t.includes('email') || t.includes('username') || t.includes('邮箱') || t.includes('用户名') || t.includes('sign in with email')) {
+			btn.click();
+			if (findUsername()) return true;
+		}
+	}
+
 	for (const tab of document.querySelectorAll('.semi-card .semi-tabs-tab')) {
 		if (!isVisible(tab) || inDialog(tab)) continue;
 		tab.click();
@@ -427,11 +436,11 @@ _FIND_SLIDER_JS = """() => {
 	}
 
 	const tRect = trackEl ? trackEl.getBoundingClientRect() : null;
-	let maxDistance = 260;
+	let maxDistance = 255;
 	if (tRect && tRect.width >= 180 && tRect.width <= 400) {
-		maxDistance = Math.round((tRect.x + tRect.width) - (hRect.x + hRect.width));
+		maxDistance = Math.round((tRect.x + tRect.width) - (hRect.x + hRect.width) - 6);
 	}
-	maxDistance = Math.min(Math.max(maxDistance, 200), 320);
+	maxDistance = Math.min(Math.max(maxDistance, 190), 275);
 
 	return {
 		isWafPage: true,
@@ -663,23 +672,8 @@ async def navigate_login_page(
 	provider: str = '',
 	account_name: str = '',
 ) -> None:
-	"""预热站点、导航登录页并等待 SPA 渲染完成。"""
-	from urllib.parse import urlparse
-
-	parsed = urlparse(login_url)
-	base_url = f'{parsed.scheme}://{parsed.netloc}/'
+	"""导航登录页并等待 SPA 渲染完成。"""
 	attempt_timeout = min(timeout_ms, 60_000)
-
-	try:
-		print(f'[INFO] Warming up {base_url} before login')
-		await page.goto(base_url, wait_until='load', timeout=attempt_timeout)
-		await _settle_page(page, 3, 15_000)
-		await solve_waf_slider(page)
-		closed = await dismiss_popups(page)
-		if closed:
-			print(f'[INFO] Dismissed {closed} popup dialog(s) during warmup')
-	except Exception as exc:
-		print(f'[WARN] Warmup navigation failed: {exc}')
 
 	for attempt in range(3):
 		print(f'[INFO] Navigating login page (attempt {attempt + 1}/3): {login_url}')
