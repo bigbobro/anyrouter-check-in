@@ -424,6 +424,7 @@ _FIND_SLIDER_JS = """() => {
 	}
 
 	const tRect = trackEl ? trackEl.getBoundingClientRect() : null;
+	const maxDistance = tRect ? Math.max((tRect.x + tRect.width) - (hRect.x + hRect.width), 150) : 260;
 
 	return {
 		isWafPage: true,
@@ -440,6 +441,7 @@ _FIND_SLIDER_JS = """() => {
 			width: tRect.width,
 			height: tRect.height,
 		} : null,
+		maxDistance,
 		tag: handleEl.tagName,
 		className: handleEl.className,
 		id: handleEl.id,
@@ -494,12 +496,14 @@ async def solve_waf_slider(page: Page, max_retries: int = 3) -> bool:
 		h = slider_info['handle']
 		t = slider_info.get('track')
 		handle_width = h.get('width', 40.0)
-		if t and t.get('width') and 150.0 <= t['width'] <= 450.0:
-			track_width = t['width']
+		if slider_info.get('maxDistance'):
+			distance = float(slider_info['maxDistance'])
+		elif t and t.get('width') and 150.0 <= t['width'] <= 450.0:
+			distance = max(t['width'] - handle_width, 240.0)
 		else:
-			track_width = 300.0
+			distance = 260.0
 
-		distance = max(track_width - handle_width, 240.0)
+		track_width = t['width'] if t and t.get('width') else distance + handle_width
 
 		start_x = h['x'] + handle_width / 2
 		start_y = h['y'] + h['height'] / 2
@@ -512,21 +516,21 @@ async def solve_waf_slider(page: Page, max_retries: int = 3) -> bool:
 
 		try:
 			await page.mouse.move(start_x, start_y)
-			await asyncio.sleep(random.uniform(0.15, 0.25))
+			await asyncio.sleep(random.uniform(0.12, 0.22))
 			await page.mouse.down()
-			await asyncio.sleep(random.uniform(0.08, 0.15))
+			await asyncio.sleep(random.uniform(0.06, 0.12))
 
-			steps = random.randint(30, 40)
+			steps = random.randint(32, 42)
 			for i in range(1, steps + 1):
 				prog = i / steps
 				ease = (1.0 - math.cos(prog * math.pi)) / 2.0
-				cur_x = start_x + distance * ease + random.uniform(-0.3, 0.3)
-				cur_y = start_y + random.uniform(-0.8, 0.8)
+				cur_x = start_x + distance * ease + random.uniform(-0.2, 0.2)
+				cur_y = start_y + math.sin(prog * math.pi * 2) * random.uniform(0.3, 0.8)
 				await page.mouse.move(cur_x, cur_y)
 				await asyncio.sleep(random.uniform(0.012, 0.022))
 
 			await page.mouse.move(start_x + distance, start_y)
-			await asyncio.sleep(random.uniform(0.15, 0.25))
+			await asyncio.sleep(random.uniform(0.2, 0.35))
 			await page.mouse.up()
 
 			await asyncio.sleep(3)
