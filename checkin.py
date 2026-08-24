@@ -146,6 +146,11 @@ async def get_waf_cookies_with_browser(
 		return None
 
 
+def browser_fallback_enabled() -> bool:
+	"""是否允许在 API 登录失败后回退浏览器登录（CHECKIN_BROWSER_FALLBACK=0 可关闭，用于快速诊断）。"""
+	return os.getenv('CHECKIN_BROWSER_FALLBACK', '1').strip().lower() not in {'0', 'false', 'no', 'off'}
+
+
 def login_via_api(
 	account_name: str,
 	provider_config,
@@ -202,6 +207,8 @@ def login_via_api(
 					'will fallback to browser login'
 				)
 				print(f'[INFO] {account_name}: WAF response snippet: {snippet}')
+				if is_debug_enabled():
+					print(f'[INFO] {account_name}: Full WAF challenge body: {response.text[:8000]}')
 				return None, True
 
 			if not result.get('success'):
@@ -480,6 +487,9 @@ async def check_in_account(account: AccountConfig, account_index: int, app_confi
 			)
 			if login_result is None and not fallback_to_browser:
 				print(f'[FAILED] {account_name}: Email/password login failed, will not use stale session cookies')
+				return False, None, None
+			if login_result is None and not browser_fallback_enabled():
+				print(f'[FAILED] {account_name}: Browser fallback disabled via CHECKIN_BROWSER_FALLBACK=0')
 				return False, None, None
 		if login_result is None:
 			login_result = await login_with_credentials(

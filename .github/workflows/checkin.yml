@@ -92,6 +92,7 @@ jobs:
     - name: 执行签到
       env:
         DEBUG_MODE: ${{ env.DEBUG_MODE }}
+        CHECKIN_BROWSER_FALLBACK: ${{ env.DEBUG_MODE == 'true' && '0' || '1' }}
         CHECKIN_HEADLESS: false
         CHECKIN_HUMANIZE: true
         CHECKIN_WAIT_TIMEOUT_MS: 120000

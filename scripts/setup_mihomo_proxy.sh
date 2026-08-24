@@ -111,10 +111,20 @@ if EGRESS=$(curl -fsS -x "${PROXY_URL}" --max-time 15 "https://ipinfo.io/json" 2
 else
 	echo "[WARN] Failed to fetch proxy egress info"
 fi
-if [[ -f ./subscription.yaml ]]; then
-	NODE_COUNT=$(grep -cE '^\s*-\s*name:' ./subscription.yaml || true)
+SUBSCRIPTION_FILE=""
+for candidate in ./subscription.yaml ./providers/subscription.yaml; do
+	if [[ -f "${candidate}" ]]; then
+		SUBSCRIPTION_FILE="${candidate}"
+		break
+	fi
+done
+if [[ -n "${SUBSCRIPTION_FILE}" ]]; then
+	NODE_COUNT=$(grep -cE '^\s*-\s*name:' "${SUBSCRIPTION_FILE}" || true)
 	echo "[INFO] Subscription nodes (${NODE_COUNT}):"
-	grep -oE '^\s*-\s*name:.*' ./subscription.yaml | sed -E 's/^\s*-\s*name:\s*//' | head -50 || true
+	grep -oE '^\s*-\s*name:.*' "${SUBSCRIPTION_FILE}" | sed -E 's/^\s*-\s*name:\s*//' | head -50 || true
+else
+	echo "[WARN] Subscription file not found under ${PROXY_DIR}, cannot list node names"
+	ls -la "${PROXY_DIR}" || true
 fi
 
 if [[ -n "${GITHUB_ENV:-}" ]]; then

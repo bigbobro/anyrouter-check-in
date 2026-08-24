@@ -46,6 +46,18 @@ def test_provider_api_login_can_override_builtin(monkeypatch):
 	assert config.providers['agentrouter'].api_login is False
 
 
+def test_browser_fallback_enabled_by_default(monkeypatch):
+	monkeypatch.delenv('CHECKIN_BROWSER_FALLBACK', raising=False)
+
+	assert checkin.browser_fallback_enabled() is True
+
+
+def test_browser_fallback_can_be_disabled(monkeypatch):
+	monkeypatch.setenv('CHECKIN_BROWSER_FALLBACK', '0')
+
+	assert checkin.browser_fallback_enabled() is False
+
+
 def test_api_login_success_returns_session_cookies_and_user_id(monkeypatch):
 	def handler(request: httpx.Request) -> httpx.Response:
 		assert request.url.path == '/api/user/login'
