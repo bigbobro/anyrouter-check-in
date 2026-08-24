@@ -391,14 +391,14 @@ _FIND_SLIDER_JS = """() => {
 	const trackSelectors = [
 		'#aliyunCaptcha-sliding-track',
 		'.aliyunCaptcha-sliding-track',
-		'#aliyunCaptcha-sliding',
-		'.aliyunCaptcha-sliding-container',
-		'.aliyunCaptcha-sliding-panel',
 		'#aliyunCaptcha-sliding-bar',
 		'#nc_1__scale_text',
 		'.nc_scale',
 		'div.nc_scale',
 		'div[id*="_scale"]',
+		'#aliyunCaptcha-sliding',
+		'.aliyunCaptcha-sliding-container',
+		'.aliyunCaptcha-sliding-panel',
 		'#nc_1_wrapper',
 		'.nc-container',
 		'#nocaptcha',
@@ -406,8 +406,11 @@ _FIND_SLIDER_JS = """() => {
 	for (const ts of trackSelectors) {
 		const t = document.querySelector(ts);
 		if (t && isVisible(t)) {
-			trackEl = t;
-			break;
+			const r = t.getBoundingClientRect();
+			if (r.width >= 180 && r.width <= 400 && r.height >= 20 && r.height <= 80) {
+				trackEl = t;
+				break;
+			}
 		}
 	}
 
@@ -415,7 +418,7 @@ _FIND_SLIDER_JS = """() => {
 		let p = handleEl.parentElement;
 		while (p && p !== document.body) {
 			const pRect = p.getBoundingClientRect();
-			if (pRect.width >= 150 && pRect.width <= 450 && pRect.height >= 20 && pRect.height <= 80) {
+			if (pRect.width >= 180 && pRect.width <= 400 && pRect.height >= 20 && pRect.height <= 80) {
 				trackEl = p;
 				break;
 			}
@@ -424,7 +427,11 @@ _FIND_SLIDER_JS = """() => {
 	}
 
 	const tRect = trackEl ? trackEl.getBoundingClientRect() : null;
-	const maxDistance = tRect ? Math.max((tRect.x + tRect.width) - (hRect.x + hRect.width), 150) : 260;
+	let maxDistance = 260;
+	if (tRect && tRect.width >= 180 && tRect.width <= 400) {
+		maxDistance = Math.round((tRect.x + tRect.width) - (hRect.x + hRect.width));
+	}
+	maxDistance = Math.min(Math.max(maxDistance, 200), 320);
 
 	return {
 		isWafPage: true,
