@@ -78,6 +78,13 @@ SLIDER_TRACK_SELECTORS = (
 	'#nocaptcha',
 )
 SLIDER_REFRESH_SELECTORS = (
+	'#aliyunCaptcha-refresh',
+	'.aliyunCaptcha-refresh',
+	'.aliyunCaptcha-sliding-refresh',
+	'.aliyunCaptcha-sliding-error',
+	'.aliyunCaptcha-btn-refresh',
+	'[class*="sliding-error"]',
+	'[class*="sliding-refresh"]',
 	'#nc_1_refresh1',
 	'.nc_scale .errloading a',
 	'a[href*="javascript:noCaptcha"]',
@@ -382,6 +389,12 @@ _FIND_SLIDER_JS = """() => {
 
 	let trackEl = null;
 	const trackSelectors = [
+		'#aliyunCaptcha-sliding-track',
+		'.aliyunCaptcha-sliding-track',
+		'#aliyunCaptcha-sliding',
+		'.aliyunCaptcha-sliding-container',
+		'.aliyunCaptcha-sliding-panel',
+		'#aliyunCaptcha-sliding-bar',
 		'#nc_1__scale_text',
 		'.nc_scale',
 		'div.nc_scale',
@@ -402,7 +415,7 @@ _FIND_SLIDER_JS = """() => {
 		let p = handleEl.parentElement;
 		while (p && p !== document.body) {
 			const pRect = p.getBoundingClientRect();
-			if (pRect.width >= 150 && pRect.width <= 700 && pRect.height >= 20 && pRect.height <= 120) {
+			if (pRect.width >= 150 && pRect.width <= 450 && pRect.height >= 20 && pRect.height <= 80) {
 				trackEl = p;
 				break;
 			}
@@ -480,10 +493,15 @@ async def solve_waf_slider(page: Page, max_retries: int = 3) -> bool:
 
 		h = slider_info['handle']
 		t = slider_info.get('track')
-		track_width = t['width'] if t and t.get('width') and t['width'] > 100 else 360.0
-		distance = max(track_width - h['width'] + 35, 320.0)
+		handle_width = h.get('width', 40.0)
+		if t and t.get('width') and 150.0 <= t['width'] <= 450.0:
+			track_width = t['width']
+		else:
+			track_width = 300.0
 
-		start_x = h['x'] + h['width'] / 2
+		distance = max(track_width - handle_width, 240.0)
+
+		start_x = h['x'] + handle_width / 2
 		start_y = h['y'] + h['height'] / 2
 
 		print(
@@ -494,21 +512,21 @@ async def solve_waf_slider(page: Page, max_retries: int = 3) -> bool:
 
 		try:
 			await page.mouse.move(start_x, start_y)
-			await asyncio.sleep(random.uniform(0.15, 0.3))
+			await asyncio.sleep(random.uniform(0.15, 0.25))
 			await page.mouse.down()
-			await asyncio.sleep(random.uniform(0.1, 0.2))
+			await asyncio.sleep(random.uniform(0.08, 0.15))
 
-			steps = random.randint(35, 45)
+			steps = random.randint(30, 40)
 			for i in range(1, steps + 1):
 				prog = i / steps
 				ease = (1.0 - math.cos(prog * math.pi)) / 2.0
-				cur_x = start_x + distance * ease + random.uniform(-0.5, 0.5)
-				cur_y = start_y + random.uniform(-1.0, 1.0)
+				cur_x = start_x + distance * ease + random.uniform(-0.3, 0.3)
+				cur_y = start_y + random.uniform(-0.8, 0.8)
 				await page.mouse.move(cur_x, cur_y)
-				await asyncio.sleep(random.uniform(0.012, 0.025))
+				await asyncio.sleep(random.uniform(0.012, 0.022))
 
-			await page.mouse.move(start_x + distance + 20, start_y)
-			await asyncio.sleep(random.uniform(0.2, 0.35))
+			await page.mouse.move(start_x + distance, start_y)
+			await asyncio.sleep(random.uniform(0.15, 0.25))
 			await page.mouse.up()
 
 			await asyncio.sleep(3)
@@ -519,7 +537,7 @@ async def solve_waf_slider(page: Page, max_retries: int = 3) -> bool:
 					res = await frame.evaluate("""() => {
 						const text = document.body?.innerText || '';
 						if (/验证通过|Successful|Passed/i.test(text)) return true;
-						const okIcon = document.querySelector('.nc_iconfont.icon_ok, .nc-lang-cnt, .nc_ok');
+						const okIcon = document.querySelector('.nc_iconfont.icon_ok, .nc-lang-cnt, .nc_ok, .aliyunCaptcha-sliding-success');
 						if (okIcon) return true;
 						const hasWaf = /Access Verification|请进行验证|为了更好的访问体验/i.test(text);
 						return !hasWaf;
@@ -535,7 +553,32 @@ async def solve_waf_slider(page: Page, max_retries: int = 3) -> bool:
 				await asyncio.sleep(2)
 				return True
 
-			if slider_frame:
+			refreshed = False
+			for frame in page.frames:
+				try:
+					clicked = await frame.evaluate("""() => {
+						const err = document.querySelector('.aliyunCaptcha-sliding-error, [class*="sliding-error"], [class*="refresh"], #aliyunCaptcha-refresh, #nc_1_refresh1');
+						if (err) {
+							err.click();
+							return true;
+						}
+						for (const el of document.querySelectorAll('span, div, a, p')) {
+							if (/Refresh to retry|刷新重试/i.test(el.innerText || '')) {
+								el.click();
+								return true;
+							}
+						}
+						return false;
+					}""")
+					if clicked:
+						print('[WAF] Slider reload button clicked')
+						refreshed = True
+						await asyncio.sleep(2)
+						break
+				except Exception:  # nosec B112
+					continue
+
+			if not refreshed and slider_frame:
 				for r_selector in SLIDER_REFRESH_SELECTORS:
 					r_loc = slider_frame.locator(r_selector).first
 					try:
