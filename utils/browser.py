@@ -101,7 +101,8 @@ _VISIBLE_CHECK_JS = """
 _SITE_READY_JS = f"""() => {{
 {_VISIBLE_CHECK_JS}
 	const text = document.body?.innerText || '';
-	const blocked = /请进行验证|为了更好的访问体验|访问受限|Access denied|verify you are human/i.test(text);
+	const title = document.title || '';
+	const blocked = /Verification|Access Verification|请进行验证|为了更好的访问体验|访问受限|Access denied|verify you are human|Please slide to verify/i.test(text) || /Verification/i.test(title);
 	if (blocked) return false;
 	const wafBlockers = document.querySelector(
 		'iframe[src*="captcha"], iframe[src*="verify"], iframe[src*="slide"], .nc-container, #nocaptcha'
@@ -119,7 +120,8 @@ _SITE_READY_JS = f"""() => {{
 _LOGIN_SHELL_READY_JS = f"""() => {{
 {_VISIBLE_CHECK_JS}
 	const text = document.body?.innerText || '';
-	const blocked = /请进行验证|为了更好的访问体验|访问受限|Access denied|verify you are human/i.test(text);
+	const title = document.title || '';
+	const blocked = /Verification|Access Verification|请进行验证|为了更好的访问体验|访问受限|Access denied|verify you are human|Please slide to verify/i.test(text) || /Verification/i.test(title);
 	if (blocked) return false;
 	return countVisible('.semi-card') > 0 || countVisible('#username') > 0 || countVisible('button') >= 2;
 }}"""
@@ -309,108 +311,241 @@ def take_pending_screenshots() -> list[Path]:
 	return paths
 
 
+_FIND_SLIDER_JS = """() => {
+	const isVisible = (el) => {
+		if (!el || !el.isConnected) return false;
+		const style = window.getComputedStyle(el);
+		if (style.display === 'none' || style.visibility === 'hidden' || parseFloat(style.opacity) === 0) {
+			return false;
+		}
+		const rect = el.getBoundingClientRect();
+		return rect.width > 0 && rect.height > 0;
+	};
+
+	const text = document.body?.innerText || '';
+	const title = document.title || '';
+	const isWafPage = /Verification|Access Verification|请进行验证|为了更好的访问体验|Please slide to verify/i.test(text) || /Verification/i.test(title);
+
+	const selectors = [
+		'#nc_1_n1z',
+		'.btn_slide',
+		'[id*="_n1z"]',
+		'[id*="n1z"]',
+		'[class*="btn_slide"]',
+		'[class*="btn_warn"]',
+		'[class*="btn_ok"]',
+		'.nc_iconfont.btn_slide',
+		'span.nc_iconfont',
+		'div.nc_scale span',
+		'div.nc_scale div',
+		'.nc-container .btn_slide',
+		'#nocaptcha .btn_slide',
+		'[aria-label*="slide" i]',
+		'[class*="slide_btn" i]',
+		'[class*="slider" i]',
+	];
+
+	let handleEl = null;
+	for (const s of selectors) {
+		for (const el of document.querySelectorAll(s)) {
+			if (isVisible(el)) {
+				handleEl = el;
+				break;
+			}
+		}
+		if (handleEl) break;
+	}
+
+	if (!handleEl && isWafPage) {
+		for (const el of document.querySelectorAll('div, span, i, a, p')) {
+			if (!isVisible(el)) continue;
+			const rect = el.getBoundingClientRect();
+			const style = window.getComputedStyle(el);
+			if (rect.width >= 20 && rect.width <= 90 && rect.height >= 20 && rect.height <= 90 && rect.top > 0) {
+				const isDraggable = style.cursor === 'move' || style.cursor === 'pointer' ||
+					el.className.toLowerCase().includes('btn') ||
+					el.className.toLowerCase().includes('slide') ||
+					el.id.toLowerCase().includes('n1z');
+				if (isDraggable) {
+					handleEl = el;
+					break;
+				}
+			}
+		}
+	}
+
+	if (!handleEl) {
+		return { isWafPage, found: false };
+	}
+
+	const hRect = handleEl.getBoundingClientRect();
+
+	let trackEl = null;
+	const trackSelectors = [
+		'#nc_1__scale_text',
+		'.nc_scale',
+		'div.nc_scale',
+		'div[id*="_scale"]',
+		'#nc_1_wrapper',
+		'.nc-container',
+		'#nocaptcha',
+	];
+	for (const ts of trackSelectors) {
+		const t = document.querySelector(ts);
+		if (t && isVisible(t)) {
+			trackEl = t;
+			break;
+		}
+	}
+
+	if (!trackEl) {
+		let p = handleEl.parentElement;
+		while (p && p !== document.body) {
+			const pRect = p.getBoundingClientRect();
+			if (pRect.width >= 150 && pRect.width <= 700 && pRect.height >= 20 && pRect.height <= 120) {
+				trackEl = p;
+				break;
+			}
+			p = p.parentElement;
+		}
+	}
+
+	const tRect = trackEl ? trackEl.getBoundingClientRect() : null;
+
+	return {
+		isWafPage: true,
+		found: true,
+		handle: {
+			x: hRect.x,
+			y: hRect.y,
+			width: hRect.width,
+			height: hRect.height,
+		},
+		track: tRect ? {
+			x: tRect.x,
+			y: tRect.y,
+			width: tRect.width,
+			height: tRect.height,
+		} : null,
+		tag: handleEl.tagName,
+		className: handleEl.className,
+		id: handleEl.id,
+	};
+}"""
+
+
 async def solve_waf_slider(page: Page, max_retries: int = 3) -> bool:
 	"""检测并尝试通过阿里云 WAF / Access Verification 等滑块人机验证。"""
 	for attempt in range(max_retries):
-		handle_locator = None
-		for selector in SLIDER_HANDLE_SELECTORS:
-			loc = page.locator(selector).first
+		slider_info = None
+		slider_frame = None
+
+		for frame in page.frames:
 			try:
-				if await loc.is_visible():
-					handle_locator = loc
+				info = await frame.evaluate(_FIND_SLIDER_JS)
+				if info and info.get('found'):
+					slider_info = info
+					slider_frame = frame
 					break
 			except Exception:  # nosec B112
 				continue
 
-		if not handle_locator:
-			# 检查页面是否包含 Access Verification 等特征文字
-			has_waf_text = await page.evaluate("""() => {
-				const text = document.body?.innerText || '';
-				return /Access Verification|请进行验证|为了更好的访问体验|请向右滑动|verify you are human/i.test(text);
-			}""")
-			if not has_waf_text:
-				return False
-			await asyncio.sleep(1)
-			for selector in SLIDER_HANDLE_SELECTORS:
-				loc = page.locator(selector).first
+		if not slider_info:
+			is_waf = False
+			for frame in page.frames:
 				try:
-					if await loc.is_visible():
-						handle_locator = loc
+					info = await frame.evaluate(_FIND_SLIDER_JS)
+					if info and info.get('isWafPage'):
+						is_waf = True
 						break
 				except Exception:  # nosec B112
 					continue
-			if not handle_locator:
+
+			if not is_waf:
 				return False
 
-		print(f'[WAF] Detected Access Verification slider (attempt {attempt + 1}/{max_retries}), attempting human-like slide...')
-
-		try:
-			box_handle = await handle_locator.bounding_box()
-			if not box_handle:
-				await asyncio.sleep(1)
-				continue
-
-			track_width = 300.0
-			for selector in SLIDER_TRACK_SELECTORS:
-				t_loc = page.locator(selector).first
+			await asyncio.sleep(1.5)
+			for frame in page.frames:
 				try:
-					if await t_loc.is_visible():
-						t_box = await t_loc.bounding_box()
-						if t_box and t_box['width'] > 100:
-							track_width = t_box['width']
-							break
+					info = await frame.evaluate(_FIND_SLIDER_JS)
+					if info and info.get('found'):
+						slider_info = info
+						slider_frame = frame
+						break
 				except Exception:  # nosec B112
 					continue
 
-			distance = max(track_width - box_handle['width'] + 10, 280.0)
+			if not slider_info:
+				return False
 
-			start_x = box_handle['x'] + box_handle['width'] / 2
-			start_y = box_handle['y'] + box_handle['height'] / 2
+		h = slider_info['handle']
+		t = slider_info.get('track')
+		track_width = t['width'] if t and t.get('width') and t['width'] > 100 else 360.0
+		distance = max(track_width - h['width'] + 35, 320.0)
 
+		start_x = h['x'] + h['width'] / 2
+		start_y = h['y'] + h['height'] / 2
+
+		print(
+			f'[WAF] Found slider handle <{slider_info.get("tag")} id="{slider_info.get("id")}" '
+			f'class="{slider_info.get("className")}"> at ({start_x:.1f}, {start_y:.1f}), '
+			f'track width {track_width:.1f}px (attempt {attempt + 1}/{max_retries}), dragging {distance:.1f}px...'
+		)
+
+		try:
 			await page.mouse.move(start_x, start_y)
-			await asyncio.sleep(random.uniform(0.1, 0.25))
+			await asyncio.sleep(random.uniform(0.15, 0.3))
 			await page.mouse.down()
-			await asyncio.sleep(random.uniform(0.05, 0.15))
+			await asyncio.sleep(random.uniform(0.1, 0.2))
 
-			steps = random.randint(25, 35)
+			steps = random.randint(35, 45)
 			for i in range(1, steps + 1):
-				t = i / steps
-				ease = (1.0 - math.cos(t * math.pi)) / 2.0
+				prog = i / steps
+				ease = (1.0 - math.cos(prog * math.pi)) / 2.0
 				cur_x = start_x + distance * ease + random.uniform(-0.5, 0.5)
 				cur_y = start_y + random.uniform(-1.0, 1.0)
 				await page.mouse.move(cur_x, cur_y)
-				await asyncio.sleep(random.uniform(0.01, 0.025))
+				await asyncio.sleep(random.uniform(0.012, 0.025))
 
-			await page.mouse.move(start_x + distance + random.uniform(2, 6), start_y)
-			await asyncio.sleep(random.uniform(0.05, 0.12))
+			await page.mouse.move(start_x + distance + 20, start_y)
+			await asyncio.sleep(random.uniform(0.2, 0.35))
 			await page.mouse.up()
 
-			await asyncio.sleep(2)
+			await asyncio.sleep(3)
 
-			passed = await page.evaluate("""() => {
-				const text = document.body?.innerText || '';
-				if (/验证通过|Successful|Passed/i.test(text)) return true;
-				const okIcon = document.querySelector('.nc_iconfont.icon_ok, .nc-lang-cnt, .nc_ok');
-				if (okIcon) return true;
-				const hasWaf = /Access Verification|请进行验证|为了更好的访问体验/i.test(text);
-				return !hasWaf;
-			}""")
+			passed = False
+			for frame in page.frames:
+				try:
+					res = await frame.evaluate("""() => {
+						const text = document.body?.innerText || '';
+						if (/验证通过|Successful|Passed/i.test(text)) return true;
+						const okIcon = document.querySelector('.nc_iconfont.icon_ok, .nc-lang-cnt, .nc_ok');
+						if (okIcon) return true;
+						const hasWaf = /Access Verification|请进行验证|为了更好的访问体验/i.test(text);
+						return !hasWaf;
+					}""")
+					if res:
+						passed = True
+						break
+				except Exception:  # nosec B112
+					continue
 
 			if passed:
 				print(f'[WAF] Access Verification slider solved successfully (attempt {attempt + 1})')
 				await asyncio.sleep(2)
 				return True
 
-			for r_selector in SLIDER_REFRESH_SELECTORS:
-				r_loc = page.locator(r_selector).first
-				try:
-					if await r_loc.is_visible():
-						print('[WAF] Slider reload button detected, refreshing slider...')
-						await r_loc.click()
-						await asyncio.sleep(1.5)
-						break
-				except Exception:  # nosec B112
-					continue
+			if slider_frame:
+				for r_selector in SLIDER_REFRESH_SELECTORS:
+					r_loc = slider_frame.locator(r_selector).first
+					try:
+						if await r_loc.is_visible():
+							print('[WAF] Slider reload button detected, refreshing slider...')
+							await r_loc.click()
+							await asyncio.sleep(2)
+							break
+					except Exception:  # nosec B112
+						continue
 
 		except Exception as exc:
 			debug_print(f'[WAF] Slider solving exception on attempt {attempt + 1}: {exc}')

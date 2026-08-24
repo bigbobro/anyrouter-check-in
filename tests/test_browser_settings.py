@@ -104,19 +104,15 @@ async def test_launch_login_context_closes_browser_for_ephemeral_context(monkeyp
 async def test_solve_waf_slider_returns_false_when_no_slider(monkeypatch):
 	from utils.browser import solve_waf_slider
 
-	class FakePage:
-		def locator(self, selector):
-			class FakeLocator:
-				def first(self):
-					return self
-
-				async def is_visible(self):
-					return False
-
-			return FakeLocator()
-
+	class FakeFrame:
 		async def evaluate(self, js):
-			return False
+			return None
+
+	class FakePage:
+		@property
+		def frames(self):
+			return [FakeFrame()]
 
 	assert await solve_waf_slider(FakePage()) is False
+
 
