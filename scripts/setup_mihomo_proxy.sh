@@ -36,6 +36,11 @@ gunzip -f "${ARCHIVE}"
 chmod +x "mihomo-linux-amd64-${MIHOMO_VERSION}"
 MIHOMO_BIN="${PROXY_DIR}/mihomo-linux-amd64-${MIHOMO_VERSION}"
 
+FILTER_CONFIG=""
+if [[ -n "${PROXY_NODE_FILTER:-}" ]]; then
+	FILTER_CONFIG="    filter: '${PROXY_NODE_FILTER}'"
+fi
+
 cat > config.yaml <<EOF
 mixed-port: ${PROXY_PORT}
 allow-lan: false
@@ -62,6 +67,7 @@ proxy-groups:
     interval: 300
     tolerance: 150
     lazy: false
+${FILTER_CONFIG}
     use:
       - subscription
 
