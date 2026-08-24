@@ -104,6 +104,19 @@ fi
 
 echo "[SUCCESS] Proxy is ready: ${PROXY_URL}"
 echo "[INFO] Proxy is scoped to CHECKIN_PROXY_URL (browser/python only, not global HTTP_PROXY)"
+
+# 打印出口 IP 归属（判断是否家宽）与订阅节点名，便于配置 PROXY_NODE_FILTER
+if EGRESS=$(curl -fsS -x "${PROXY_URL}" --max-time 15 "https://ipinfo.io/json" 2>/dev/null); then
+	echo "[INFO] Proxy egress info: ${EGRESS}"
+else
+	echo "[WARN] Failed to fetch proxy egress info"
+fi
+if [[ -f ./subscription.yaml ]]; then
+	NODE_COUNT=$(grep -cE '^\s*-\s*name:' ./subscription.yaml || true)
+	echo "[INFO] Subscription nodes (${NODE_COUNT}):"
+	grep -oE '^\s*-\s*name:.*' ./subscription.yaml | sed -E 's/^\s*-\s*name:\s*//' | head -50 || true
+fi
+
 if [[ -n "${GITHUB_ENV:-}" ]]; then
 	echo "CHECKIN_PROXY_URL=${PROXY_URL}" >> "${GITHUB_ENV}"
 fi

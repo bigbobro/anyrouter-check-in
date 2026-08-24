@@ -196,10 +196,12 @@ def login_via_api(
 			try:
 				result = response.json()
 			except json.JSONDecodeError:
+				snippet = ' '.join(response.text.split())[:200]
 				print(
 					f'[WARN] {account_name}: API login returned non-JSON response (likely WAF challenge), '
 					'will fallback to browser login'
 				)
+				print(f'[INFO] {account_name}: WAF response snippet: {snippet}')
 				return None, True
 
 			if not result.get('success'):
