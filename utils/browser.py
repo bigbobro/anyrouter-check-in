@@ -531,26 +531,24 @@ async def solve_waf_slider(page: Page, max_retries: int = 3) -> bool:
 
 			await asyncio.sleep(3)
 
-			passed = False
-			for frame in page.frames:
-				try:
-					res = await frame.evaluate("""() => {
-						const text = document.body?.innerText || '';
-						if (/验证通过|Successful|Passed/i.test(text)) return true;
-						const okIcon = document.querySelector('.nc_iconfont.icon_ok, .nc-lang-cnt, .nc_ok, .aliyunCaptcha-sliding-success');
-						if (okIcon) return true;
-						const hasWaf = /Access Verification|请进行验证|为了更好的访问体验/i.test(text);
-						return !hasWaf;
-					}""")
-					if res:
-						passed = True
-						break
-				except Exception:  # nosec B112
-					continue
+			passed = await page.evaluate("""() => {
+				const text = document.body?.innerText || '';
+				const title = document.title || '';
+				const isWaf = /Verification|Access Verification|请进行验证|为了更好的访问体验|Please slide to verify/i.test(text) || /Verification/i.test(title);
+				if (isWaf) {
+					const ok = document.querySelector('.nc_iconfont.icon_ok, .nc-lang-cnt, .nc_ok, .aliyunCaptcha-sliding-success, [class*="sliding-success"], [class*="icon_ok"]');
+					return !!ok;
+				}
+				return true;
+			}""")
 
 			if passed:
-				print(f'[WAF] Access Verification slider solved successfully (attempt {attempt + 1})')
-				await asyncio.sleep(2)
+				print(f'[WAF] Access Verification slider solved successfully (attempt {attempt + 1}), waiting for page transition...')
+				try:
+					await page.wait_for_load_state('domcontentloaded', timeout=10_000)
+				except Exception:  # nosec B110
+					pass
+				await asyncio.sleep(3)
 				return True
 
 			refreshed = False
