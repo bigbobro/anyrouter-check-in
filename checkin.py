@@ -20,6 +20,7 @@ from cloakbrowser import launch_async
 from dotenv import load_dotenv
 
 from utils.browser import (
+	SESSION_COOKIE_NAME,
 	BrowserLoginResult,
 	has_session_cookie,
 	is_logged_in,
@@ -42,6 +43,10 @@ from utils.proxy import get_playwright_proxy, get_proxy_server
 load_dotenv()
 
 BALANCE_HASH_FILE = 'balance_hash.txt'
+
+HTTP_USER_AGENT = (
+	'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36'
+)
 
 
 def load_balance_hash():
@@ -139,6 +144,97 @@ async def get_waf_cookies_with_browser(
 		print(f'[FAILED] {account_name}: Error occurred while getting WAF cookies: {e}')
 		await browser.close()
 		return None
+
+
+def login_via_api(
+	account_name: str,
+	provider_config,
+	email: str,
+	password: str,
+	*,
+	use_proxy: bool = False,
+) -> tuple[BrowserLoginResult | None, bool]:
+	"""直接 POST /api/user/login 完成登录（该接口登录即签到），绕开浏览器 UI 与 WAF 滑块。
+
+	返回 (result, fallback_to_browser)：
+	- result 非 None：登录成功；
+	- result 为 None 且 fallback_to_browser=False：凭据被明确拒绝，不再尝试其他方式；
+	- result 为 None 且 fallback_to_browser=True：请求被 WAF 拦截或网络异常，回退浏览器登录。
+	"""
+	print(f'[PROCESSING] {account_name}: Trying direct API login...')
+
+	client_kwargs: dict = {'http2': True, 'timeout': 30.0, 'follow_redirects': True}
+	proxy_url = get_proxy_server(use_proxy=use_proxy)
+	if proxy_url:
+		client_kwargs['proxy'] = proxy_url
+	elif use_proxy:
+		print(f'[WARN] {account_name}: Provider requires proxy but CHECKIN_PROXY_URL is not set')
+
+	headers = {
+		'User-Agent': HTTP_USER_AGENT,
+		'Accept': 'application/json, text/plain, */*',
+		'Content-Type': 'application/json',
+		'Origin': provider_config.domain,
+		'Referer': f'{provider_config.domain}{provider_config.login_path}',
+	}
+
+	try:
+		with httpx.Client(**client_kwargs) as client:
+			response = client.post(
+				f'{provider_config.domain}/api/user/login?turnstile=',
+				json={'username': email, 'password': password},
+				headers=headers,
+			)
+
+			if response.status_code != 200:
+				print(
+					f'[WARN] {account_name}: API login returned HTTP {response.status_code}, '
+					'will fallback to browser login'
+				)
+				return None, True
+
+			try:
+				result = response.json()
+			except json.JSONDecodeError:
+				print(
+					f'[WARN] {account_name}: API login returned non-JSON response (likely WAF challenge), '
+					'will fallback to browser login'
+				)
+				return None, True
+
+			if not result.get('success'):
+				message = result.get('message', 'Unknown error')
+				if 'turnstile' in message.lower():
+					print(
+						f'[WARN] {account_name}: API login requires Turnstile ({message}), '
+						'will fallback to browser login'
+					)
+					return None, True
+				print(f'[FAILED] {account_name}: API login rejected - {message}')
+				return None, False
+
+			data = result.get('data') or {}
+			cookies: dict[str, str] = {}
+			for name, value in client.cookies.items():
+				if name and value:
+					cookies[name] = value
+			if SESSION_COOKIE_NAME not in cookies:
+				print(
+					f'[WARN] {account_name}: API login succeeded but no session cookie issued, '
+					'will fallback to browser login'
+				)
+				return None, True
+			api_user = str(data['id']) if data.get('id') is not None else None
+
+			if data.get('checked_in'):
+				print(f'[SUCCESS] {account_name}: API login successful, check-in reward granted')
+			else:
+				print(f'[SUCCESS] {account_name}: API login successful (already checked in today)')
+			return BrowserLoginResult(cookies=cookies, api_user=api_user), False
+
+	except Exception as e:
+		print(f'[WARN] {account_name}: API login error - {str(e)[:80]}, will fallback to browser login')
+		return None, True
 
 
 async def login_with_credentials(
@@ -371,13 +467,26 @@ async def check_in_account(account: AccountConfig, account_index: int, app_confi
 	if account.has_login_credentials():
 		print(f'[INFO] {account_name}: Attempting email/password login (priority)...')
 		assert account.email is not None and account.password is not None
-		login_result = await login_with_credentials(
-			account_name,
-			provider_config,
-			account.provider,
-			account.email,
-			account.password,
-		)
+		login_result = None
+		if provider_config.api_login:
+			login_result, fallback_to_browser = login_via_api(
+				account_name,
+				provider_config,
+				account.email,
+				account.password,
+				use_proxy=provider_config.use_proxy,
+			)
+			if login_result is None and not fallback_to_browser:
+				print(f'[FAILED] {account_name}: Email/password login failed, will not use stale session cookies')
+				return False, None, None
+		if login_result is None:
+			login_result = await login_with_credentials(
+				account_name,
+				provider_config,
+				account.provider,
+				account.email,
+				account.password,
+			)
 		if login_result:
 			all_cookies = login_result.cookies
 			resolved_api_user = login_result.api_user
@@ -434,7 +543,7 @@ def run_check_in_requests(
 			client.cookies.update(all_cookies)
 
 			headers = {
-				'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36',
+				'User-Agent': HTTP_USER_AGENT,
 				'Accept': 'application/json, text/plain, */*',
 				'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
 				'Accept-Encoding': 'gzip, deflate, br, zstd',

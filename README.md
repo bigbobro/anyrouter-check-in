@@ -261,8 +261,9 @@
   - `bypass_method: "waf_cookies"`（需要先获取 WAF cookies，然后执行签到）
   - `sign_in_path: "/api/user/sign_in"`
 - `agentrouter`：
-  - `bypass_method: "waf_cookies"`（需要获取 `acw_tc`）
-  - `sign_in_path: null`（查询用户信息时自动签到）
+  - `api_login: true`（优先直接调用 `/api/user/login` 完成登录与签到，失败再回退浏览器登录）
+  - `bypass_method: "waf_cookies"`（需要获取 `acw_tc`，仅浏览器回退路径使用）
+  - `sign_in_path: null`（登录接口即签到）
   - `use_proxy: true`
 
 **重要提示**：
