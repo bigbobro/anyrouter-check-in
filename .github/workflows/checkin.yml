@@ -9,6 +9,11 @@ on:
         required: false
         default: false
         type: boolean
+      browser_fallback:
+        description: API 登录失败后回退浏览器登录（关闭可快速失败）
+        required: false
+        default: true
+        type: boolean
 
 jobs:
   checkin:
@@ -92,7 +97,7 @@ jobs:
     - name: 执行签到
       env:
         DEBUG_MODE: ${{ env.DEBUG_MODE }}
-        CHECKIN_BROWSER_FALLBACK: ${{ env.DEBUG_MODE == 'true' && '0' || '1' }}
+        CHECKIN_BROWSER_FALLBACK: ${{ github.event.inputs.browser_fallback == 'false' && '0' || '1' }}
         CHECKIN_HEADLESS: false
         CHECKIN_HUMANIZE: true
         CHECKIN_WAIT_TIMEOUT_MS: 120000

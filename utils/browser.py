@@ -438,9 +438,9 @@ _FIND_SLIDER_JS = """() => {
 	const tRect = trackEl ? trackEl.getBoundingClientRect() : null;
 	let maxDistance = 255;
 	if (tRect && tRect.width >= 180 && tRect.width <= 400) {
-		maxDistance = Math.round((tRect.x + tRect.width) - (hRect.x + hRect.width) - 6);
+		maxDistance = Math.round((tRect.x + tRect.width) - (hRect.x + hRect.width));
 	}
-	maxDistance = Math.min(Math.max(maxDistance, 190), 275);
+	maxDistance = Math.min(Math.max(maxDistance, 190), 340);
 
 	return {
 		isWafPage: true,
@@ -531,22 +531,35 @@ async def solve_waf_slider(page: Page, max_retries: int = 3) -> bool:
 		)
 
 		try:
+			# 先沿弧线接近手柄，模拟真人移动鼠标
+			approach_steps = random.randint(6, 10)
+			for i in range(1, approach_steps + 1):
+				prog = i / approach_steps
+				cur_x = start_x * prog + random.uniform(-2, 2)
+				cur_y = start_y * prog + random.uniform(-2, 2)
+				await page.mouse.move(cur_x, cur_y)
+				await asyncio.sleep(random.uniform(0.01, 0.03))
 			await page.mouse.move(start_x, start_y)
-			await asyncio.sleep(random.uniform(0.12, 0.22))
+			await asyncio.sleep(random.uniform(0.2, 0.4))
 			await page.mouse.down()
-			await asyncio.sleep(random.uniform(0.06, 0.12))
+			await asyncio.sleep(random.uniform(0.08, 0.15))
 
-			steps = random.randint(32, 42)
+			# 拖满全程并稍微过冲（轨道末端会被 DOM 钳位），中途带微停顿
+			target = distance + random.uniform(3, 8)
+			steps = random.randint(48, 64)
+			pause_at = {random.randint(8, steps - 8) for _ in range(2)}
 			for i in range(1, steps + 1):
 				prog = i / steps
 				ease = (1.0 - math.cos(prog * math.pi)) / 2.0
-				cur_x = start_x + distance * ease + random.uniform(-0.2, 0.2)
-				cur_y = start_y + math.sin(prog * math.pi * 2) * random.uniform(0.3, 0.8)
+				cur_x = start_x + target * ease + random.uniform(-0.4, 0.4)
+				cur_y = start_y + math.sin(prog * math.pi * 2) * random.uniform(0.3, 1.0)
 				await page.mouse.move(cur_x, cur_y)
-				await asyncio.sleep(random.uniform(0.012, 0.022))
+				await asyncio.sleep(random.uniform(0.015, 0.03))
+				if i in pause_at:
+					await asyncio.sleep(random.uniform(0.05, 0.12))
 
-			await page.mouse.move(start_x + distance, start_y)
-			await asyncio.sleep(random.uniform(0.2, 0.35))
+			await page.mouse.move(start_x + target, start_y)
+			await asyncio.sleep(random.uniform(0.4, 0.7))
 			await page.mouse.up()
 
 			await asyncio.sleep(3)
@@ -563,7 +576,9 @@ async def solve_waf_slider(page: Page, max_retries: int = 3) -> bool:
 			}""")
 
 			if passed:
-				print(f'[WAF] Access Verification slider solved successfully (attempt {attempt + 1}), waiting for page transition...')
+				print(
+					f'[WAF] Access Verification slider solved successfully (attempt {attempt + 1}), waiting for page transition...'
+				)
 				try:
 					await page.wait_for_load_state('domcontentloaded', timeout=10_000)
 				except Exception:  # nosec B110
