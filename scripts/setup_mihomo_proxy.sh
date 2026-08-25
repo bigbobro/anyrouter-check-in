@@ -8,6 +8,8 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 if [[ -z "${PROXY_SUBSCRIPTION_URL:-}" ]]; then
 	echo "[INFO] PROXY_SUBSCRIPTION_URL not set, skip proxy setup"
 	exit 0
@@ -36,6 +38,32 @@ gunzip -f "${ARCHIVE}"
 chmod +x "mihomo-linux-amd64-${MIHOMO_VERSION}"
 MIHOMO_BIN="${PROXY_DIR}/mihomo-linux-amd64-${MIHOMO_VERSION}"
 
+SUBSCRIPTION_RAW="${PROXY_DIR}/subscription.raw"
+SUBSCRIPTION_FILE="${PROXY_DIR}/subscription.yaml"
+SUBSCRIPTION_TYPE="http"
+SUBSCRIPTION_HTTP_STATUS="ERR"
+
+echo "[INFO] Downloading proxy subscription for format detection..."
+if SUBSCRIPTION_HTTP_STATUS=$(curl --retry 3 --retry-delay 5 --retry-all-errors -fsSL \
+	-A 'clash.meta' -o "${SUBSCRIPTION_RAW}" -w '%{http_code}' --max-time 30 \
+	"${PROXY_SUBSCRIPTION_URL}"); then
+	echo "[INFO] Subscription URL HTTP status: ${SUBSCRIPTION_HTTP_STATUS}"
+	if grep -qE '^[[:space:]]*proxies[[:space:]]*:' "${SUBSCRIPTION_RAW}"; then
+		cp "${SUBSCRIPTION_RAW}" "${SUBSCRIPTION_FILE}"
+		SUBSCRIPTION_TYPE="file"
+		echo "[INFO] Subscription is Clash YAML, using local file provider"
+	elif python3 "${SCRIPT_DIR}/subscription_to_clash.py" "${SUBSCRIPTION_RAW}" > "${SUBSCRIPTION_FILE}.tmp"; then
+		mv "${SUBSCRIPTION_FILE}.tmp" "${SUBSCRIPTION_FILE}"
+		SUBSCRIPTION_TYPE="file"
+		PROXY_COUNT=$(grep -c '^  - name:' "${SUBSCRIPTION_FILE}" || true)
+		echo "[INFO] Converted subscription to Clash YAML (${PROXY_COUNT} proxies)"
+	else
+		echo "[WARN] Subscription format was not recognized; falling back to mihomo HTTP provider"
+	fi
+else
+	echo "[WARN] Failed to pre-download proxy subscription; falling back to mihomo HTTP provider"
+fi
+
 FILTER_CONFIG=""
 if [[ -n "${PROXY_NODE_FILTER:-}" ]]; then
 	FILTER_CONFIG="    filter: '${PROXY_NODE_FILTER}'"
@@ -51,6 +79,20 @@ unified-delay: true
 external-controller: 127.0.0.1:9100
 
 proxy-providers:
+EOF
+
+if [[ "${SUBSCRIPTION_TYPE}" == "file" ]]; then
+	cat >> config.yaml <<EOF
+  subscription:
+    type: file
+    path: ./subscription.yaml
+    health-check:
+      enable: true
+      interval: 300
+      url: https://www.gstatic.com/generate_204
+EOF
+else
+	cat >> config.yaml <<EOF
   subscription:
     type: http
     url: "${PROXY_SUBSCRIPTION_URL}"
@@ -60,7 +102,10 @@ proxy-providers:
       enable: true
       interval: 300
       url: https://www.gstatic.com/generate_204
+EOF
+fi
 
+cat >> config.yaml <<EOF
 proxy-groups:
   - name: CHECKIN
     type: url-test
@@ -144,8 +189,7 @@ else
 fi
 
 # 诊断订阅是否真正加载成功（COMPATIBLE 单节点 = 订阅解析失败直连兜底）
-SUB_CODE=$(curl -fsS -o /dev/null -w '%{http_code}' --max-time 20 "${PROXY_SUBSCRIPTION_URL}" 2>/dev/null || echo 'ERR')
-echo "[INFO] Subscription URL HTTP status (direct): ${SUB_CODE}"
+echo "[INFO] Subscription source: ${SUBSCRIPTION_TYPE}, HTTP status: ${SUBSCRIPTION_HTTP_STATUS}"
 PROVIDER_INFO=$(curl -fsS --max-time 5 "${MIHOMO_API}/providers/proxies/subscription" 2>/dev/null \
 	| python3 -c "import sys, json; d = json.load(sys.stdin); print(d.get('vehicleType'), 'count =', len(d.get('proxies') or []))" 2>/dev/null || true)
 echo "[INFO] Provider 'subscription': ${PROVIDER_INFO:-unavailable}"
