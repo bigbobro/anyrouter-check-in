@@ -1,19 +1,17 @@
 # Any Router 多账号自动签到
 
-[![GitHub Actions](https://github.com/millylee/anyrouter-check-in/workflows/PR%20Quality%20Checks/badge.svg)](https://github.com/millylee/anyrouter-check-in/actions)
-[![codecov](https://codecov.io/gh/millylee/anyrouter-check-in/branch/main/graph/badge.svg)](https://codecov.io/gh/millylee/anyrouter-check-in)
-[![pre-commit.ci status](https://results.pre-commit.ci/badge/github/millylee/anyrouter-check-in/main.svg)](https://results.pre-commit.ci/latest/github/millylee/anyrouter-check-in/main)
+[![GitHub Actions](https://github.com/bigbobro/anyrouter-check-in/actions/workflows/checkin.yml/badge.svg)](https://github.com/bigbobro/anyrouter-check-in/actions/workflows/checkin.yml)
 [![Python Version](https://img.shields.io/badge/python-3.11%2B-blue)](https://www.python.org/downloads/)
 [![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-000000.svg)](https://github.com/astral-sh/ruff)
-[![License](https://img.shields.io/github/license/millylee/anyrouter-check-in)](LICENSE)
+[![License](https://img.shields.io/github/license/bigbobro/anyrouter-check-in)](LICENSE)
 
-多平台多账号自动签到，理论上支持所有 NewAPI、OneAPI 平台，目前内置支持 Any Router 与 Agent Router，其它可根据文档进行摸索配置。
+支持 Any Router 与 Agent Router 多账号自动签到，也可通过 `PROVIDERS` 接入其他兼容的 NewAPI、OneAPI 平台。
 
-推荐搭配使用[Auo](https://github.com/millylee/auo)，支持任意 Claude Code Token 切换的工具。
+推荐搭配使用 [Auo](https://github.com/millylee/auo)，支持任意 Claude Code Token 切换的工具。
 
 **维护开源不易，如果本项目帮助到了你，请帮忙点个 Star，谢谢!**
 
-用于 Claude Code 中转站 Any Router 网站多账号每日签到，一次 $25，限时注册即送 100 美金，[点击这里注册](https://anyrouter.top/register?aff=gSsN)。业界良心，支持 Claude Sonnet 4.5、GPT-5-Codex、Claude Code 百万上下文（使用 `/model sonnet[1m]` 开启），`gemini-2.5-pro` 模型。
+[Any Router 注册入口](https://anyrouter.top/register?aff=gSsN)。
 
 ## 功能特性
 
@@ -28,14 +26,16 @@
 
 点击右上角的 "Fork" 按钮，将本仓库 fork 到你的账户。
 
-### 2. 获取账号信息
+### 2. 准备账号信息
 
-对于每个需要签到的账号，你需要获取：(可借助 [在线 Secrets 配置生成器](https://millylee.github.io/anyrouter-check-in/))
+推荐直接配置邮箱和密码：
 
-1. **Cookies**: 用于身份验证
-2. **API User**: 用于请求头的 new-api-user 参数（自己配置其它平台时该值需要注意匹配）
+- **Any Router**：支持邮箱密码登录，也兼容旧版 `session` cookies + `api_user` 配置。
+- **Agent Router**：请使用邮箱密码。脚本优先调用登录 API，该接口会同时完成签到，无需填写 `api_user`。
 
-#### 获取 Cookies：
+如果 Any Router 仍使用旧版 session 配置，可按下面步骤获取信息（也可借助 [在线 Secrets 配置生成器](https://millylee.github.io/anyrouter-check-in/)）：
+
+#### 获取 Any Router Cookies：
 
 1. 打开浏览器，访问 https://anyrouter.top/
 2. 登录你的账户
@@ -44,7 +44,7 @@
 5. 找到 "Cookies" 选项
 6. 复制所有 cookies
 
-#### 获取 API User：
+#### 获取 Any Router API User：
 
 按照下方图片教程操作获得。
 
@@ -57,6 +57,8 @@
 5. 点击 "Add environment secret" 创建 secret：
    - Name: `ANYROUTER_ACCOUNTS`
    - Value: 你的多账号配置数据
+
+如果账号中包含 Agent Router，在 GitHub Actions 中通常还需要按下文“AgentRouter 代理配置”设置 `PROXY_SUBSCRIPTION_URL`。
 
 ### 4. 多账号配置格式
 
@@ -80,7 +82,7 @@
 
 **字段说明**：
 
-- `email` + `password`：推荐的浏览器登录方式，登录成功后会自动获取 cookies 与用户标识
+- `email` + `password`：推荐的登录方式；Agent Router 会优先直接调用登录 API，必要时再回退浏览器登录
 - `cookies`：兼容旧版的 session cookies 登录方式
 - `api_user`：session cookies 登录时用于请求头的 new-api-user 参数；邮箱密码登录可省略
 - `provider` (可选)：指定使用的服务商，默认为 `anyrouter`
@@ -92,9 +94,9 @@
 - 如果未提供 `name` 字段，会使用 `Account 1`、`Account 2` 等默认名称
 - `anyrouter` 与 `agentrouter` 配置已内置，无需填写
 
-如果使用 session cookies 登录，接下来获取 cookies 与 api_user 的值。
+如果 Any Router 使用 session cookies 登录，接下来获取 cookies 与 `api_user` 的值。
 
-通过 F12 工具，切到 Application 面板，拿到 session 的值，最好重新登录下，该值 1 个月有效期，但有可能提前失效，失效后报 401 错误，到时请再重新获取。
+通过 F12 工具切到 Application 面板，获取 `session` 的值。session 失效并出现 401 后，请重新登录并获取。
 
 ![获取 cookies](./assets/request-session.png)
 
@@ -115,22 +117,22 @@
 
 1. 在 "Actions" 选项卡中，点击 "AnyRouter 自动签到"
 2. 点击 "Run workflow" 按钮
-3. 确认运行
+3. 按需设置 `debug`（详细日志和截图）与 `browser_fallback`（API 登录失败后是否回退浏览器），然后确认运行
 
 ![运行结果](./assets/check-in.png)
 
 ## 执行时间
 
-- 脚本每 6 小时执行一次（1. action 无法准确触发，基本延时 1~1.5h；2. 目前观测到 anyrouter 的签到是每 24h 而不是零点就可签到）
+- GitHub Actions 每 12 小时触发一次；定时任务可能延迟，实际执行时间以 Actions 记录为准
 - 你也可以随时手动触发签到
 
 ## 注意事项
 
-- 请确保每个账号的 cookies 和 API User 都是正确的
+- 请确保每个账号的邮箱密码，或旧版 cookies 与 API User 配置正确
 - 可以在 Actions 页面查看详细的运行日志
-- 支持部分账号失败，只要有账号成功签到，整个任务就不会失败
-- 报 401 错误，请重新获取 cookies，理论 1 个月失效，但有 Bug，详见 [#6](https://github.com/millylee/anyrouter-check-in/issues/6)
-- 请求 200，但出现 Error 1040（08004）：Too many connections，官方数据库问题，目前已修复，但遇到几次了，详见 [#7](https://github.com/millylee/anyrouter-check-in/issues/7)
+- 只要至少一个账号成功，workflow 就可能显示绿色；完整成功必须以日志末尾的 `Success: 账号总数/账号总数` 和 `Failed: 0/账号总数` 为准
+- 报 401 错误时，请重新登录并获取 cookies，相关记录见 [#6](https://github.com/millylee/anyrouter-check-in/issues/6)
+- 请求为 200 但出现 `Error 1040 (08004): Too many connections` 时，通常是服务端数据库连接问题，可稍后重试，相关记录见 [#7](https://github.com/millylee/anyrouter-check-in/issues/7)
 
 ## 配置示例
 
@@ -172,10 +174,8 @@
   {
     "name": "AgentRouter 备用",
     "provider": "agentrouter",
-    "cookies": {
-      "session": "xyz789session"
-    },
-    "api_user": "user456"
+    "email": "agent@example.com",
+    "password": "agent_password"
   }
 ]
 ```
@@ -271,22 +271,33 @@
 - `PROVIDERS` 是可选的，不配置则使用内置的 `anyrouter` 和 `agentrouter`
 - 自定义的 provider 配置会覆盖同名的默认配置
 
-## 代理配置（可选）
+## AgentRouter 代理配置
 
-内置的 `agentrouter` 默认 `use_proxy: true`。如果你的运行环境访问该平台不稳定，可以在 GitHub Actions 中配置 mihomo 订阅代理。
+内置的 `agentrouter` 默认 `use_proxy: true`。GitHub 托管 runner 的机房出口容易触发 AgentRouter WAF，因此在 Actions 中使用 AgentRouter 时通常需要配置代理订阅；本地网络若能直接访问，则不一定需要。
 
 在仓库 Settings -> Environments -> production -> Environment secrets 中添加：
 
-- `PROXY_SUBSCRIPTION_URL`：Clash/Mihomo 订阅链接。设置后，workflow 会运行 `scripts/setup_mihomo_proxy.sh`，启动本地代理并写入 `CHECKIN_PROXY_URL`。
+- `PROXY_SUBSCRIPTION_URL`：runner 可直接访问、正文非空的订阅链接。支持 Clash YAML，以及原文或 Base64 包裹的 `ss`、`vmess`、`vless`、`trojan`、`hy2` / `hysteria2` 分享链接列表。
+- `PROXY_NODE_FILTER`（可选）：mihomo 节点名称过滤正则。不设置时脚本会逐个探测前 30 个节点，选择能通过 AgentRouter WAF 的节点；设置后会跳过自动逐节点探测，因此过滤结果本身必须可用。
 
-本地运行时也可以直接使用已有代理：
+workflow 会协商常见订阅 User-Agent、启动 mihomo，并把本地地址写入 `CHECKIN_PROXY_URL`。订阅链接属于敏感信息，不要粘贴到 issue 或公开日志中。
+
+本地已有代理时，可以直接设置：
 
 ```bash
-CHECKIN_PROXY_URL=http://127.0.0.1:7890
-PROVIDERS={"agentrouter":{"use_proxy":true}}
+CHECKIN_PROXY_URL=http://127.0.0.1:7890 uv run checkin.py
 ```
 
-如果使用订阅脚本，默认会用 `https://www.google.com/generate_204` 测试代理连通性；也可以通过 `PROXY_TEST_URL` 覆盖。
+订阅脚本默认使用 `https://www.google.com/generate_204` 检查代理连通性，可通过 `PROXY_TEST_URL` 覆盖；逐节点 WAF 探测地址可通过 `PROXY_PROBE_URL` 覆盖。
+
+运行日志至少应确认：
+
+- `Subscription candidate ... bytes ...` 中字节数大于 0。
+- `Provider 'subscription': ... count = N` 中 `N` 大于 0。
+- 未设置 `PROXY_NODE_FILTER` 时，出现 `Selected node that bypasses AgentRouter WAF`；否则检查所选节点实际可用。
+- 最终统计为 `Success: 账号总数/账号总数`、`Failed: 0/账号总数`。
+
+如果订阅响应 `bytes 0`、provider 节点数为 0，或没有节点能绕过 WAF，请更新订阅链接或调整节点过滤；不能只依据 workflow 的绿色图标判断全部账号成功。
 
 ## 开启通知
 
@@ -346,11 +357,11 @@ PROVIDERS={"agentrouter":{"use_proxy":true}}
 
 如果签到失败，请检查：
 
-1. 账号配置格式是否正确
-2. cookies 是否过期
-3. API User 是否正确
-4. 网站是否更改了签到接口
-5. 查看 Actions 运行日志获取详细错误信息
+1. 邮箱密码是否正确；Any Router 使用旧版 session 时，cookies 是否过期、`api_user` 是否匹配
+2. AgentRouter 的订阅响应是否非空，provider 节点数是否大于 0
+3. 代理节点是否通过 WAF 探测；若全部失败，更新订阅或调整 `PROXY_NODE_FILTER`
+4. 自定义平台的域名与签到接口是否发生变化
+5. 查看 Actions 末尾的成功/失败统计，不要只看 workflow 是否为绿色
 
 ## 本地开发环境设置
 
@@ -367,8 +378,8 @@ uv run python -m cloakbrowser install
 # 创建 .env 文件并配置（注意：JSON 必须是单行格式）
 # 示例：
 # ANYROUTER_ACCOUNTS=[{"name":"账号1","email":"your@email.com","password":"your_password"}]
-# PROVIDERS={"agentrouter":{"domain":"https://agentrouter.org"}}
 # PROXY_SUBSCRIPTION_URL=https://example.com/sub?token=xxx
+# PROXY_NODE_FILTER=香港|日本
 # CHECKIN_PROXY_URL=http://127.0.0.1:7890
 
 # 运行签到脚本
