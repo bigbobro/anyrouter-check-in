@@ -621,17 +621,29 @@ async def solve_waf_slider(page: Page, max_retries: int = 3) -> bool:
 
 
 def _attach_network_debug_logging(page: Page) -> None:
-	"""DEBUG_MODE 下记录失败请求与 4xx/5xx 响应，定位 SPA 资源加载问题。"""
+	"""DEBUG_MODE 下记录失败请求、异常响应与 JS 控制台错误，定位 SPA 资源加载问题。"""
 
 	def on_request_failed(request) -> None:
 		debug_print(f'[NET] Request failed: {request.method} {request.url} - {request.failure}')
 
 	def on_response(response) -> None:
+		content_type = response.headers.get('content-type', '')
 		if response.status >= 400:
 			debug_print(f'[NET] HTTP {response.status}: {response.url}')
+		elif '.js' in response.url and 'javascript' not in content_type:
+			debug_print(f'[NET] Suspicious JS response (content-type={content_type}): {response.url}')
+
+	def on_console(message) -> None:
+		if message.type in {'error', 'warning'}:
+			debug_print(f'[CONSOLE] {message.type}: {message.text[:200]}')
+
+	def on_page_error(error) -> None:
+		debug_print(f'[PAGEERROR] {str(error)[:300]}')
 
 	page.on('requestfailed', on_request_failed)
 	page.on('response', on_response)
+	page.on('console', on_console)
+	page.on('pageerror', on_page_error)
 
 
 async def prepare_browser_page(page: Page) -> None:

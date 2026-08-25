@@ -143,6 +143,16 @@ else
 	echo "[INFO] PROXY_NODE_FILTER is set, skipping auto probe"
 fi
 
+# 诊断订阅是否真正加载成功（COMPATIBLE 单节点 = 订阅解析失败直连兜底）
+SUB_CODE=$(curl -fsS -o /dev/null -w '%{http_code}' --max-time 20 "${PROXY_SUBSCRIPTION_URL}" 2>/dev/null || echo 'ERR')
+echo "[INFO] Subscription URL HTTP status (direct): ${SUB_CODE}"
+PROVIDER_INFO=$(curl -fsS --max-time 5 "${MIHOMO_API}/providers/proxies/subscription" 2>/dev/null \
+	| python3 -c "import sys, json; d = json.load(sys.stdin); print(d.get('vehicleType'), 'count =', len(d.get('proxies') or []))" 2>/dev/null || true)
+echo "[INFO] Provider 'subscription': ${PROVIDER_INFO:-unavailable}"
+if [[ -f mihomo.log ]]; then
+	grep -iE 'error|fail|panic' mihomo.log | head -5 | sed "s#${PROXY_SUBSCRIPTION_URL}#***#g" || true
+fi
+
 # 打印出口 IP 归属（判断是否家宽），便于人工核对
 if EGRESS=$(curl -fsS -x "${PROXY_URL}" --max-time 15 "https://ipinfo.io/json" 2>/dev/null); then
 	echo "[INFO] Proxy egress info: ${EGRESS}"
