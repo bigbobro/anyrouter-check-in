@@ -45,27 +45,48 @@ SUBSCRIPTION_TYPE="http"
 SUBSCRIPTION_HTTP_STATUS="ERR"
 
 echo "[INFO] Downloading proxy subscription for format detection..."
-if SUBSCRIPTION_HTTP_STATUS=$(curl --retry 3 --retry-delay 5 --retry-all-errors -fsSL \
-	-A 'clash.meta' -D "${SUBSCRIPTION_HEADERS}" -o "${SUBSCRIPTION_RAW}" -w '%{http_code}' --max-time 30 \
-	"${PROXY_SUBSCRIPTION_URL}"); then
-	echo "[INFO] Subscription URL HTTP status: ${SUBSCRIPTION_HTTP_STATUS}"
+SUBSCRIPTION_USER_AGENTS=('clash.meta' 'ClashforWindows/0.20.39' 'v2rayN/7.12.5' '')
+for SUBSCRIPTION_USER_AGENT in "${SUBSCRIPTION_USER_AGENTS[@]}"; do
+	SUBSCRIPTION_UA_LABEL="${SUBSCRIPTION_USER_AGENT:-curl-default}"
+	SUBSCRIPTION_UA_ARGS=()
+	if [[ -n "${SUBSCRIPTION_USER_AGENT}" ]]; then
+		SUBSCRIPTION_UA_ARGS=(-A "${SUBSCRIPTION_USER_AGENT}")
+	fi
+
+	if ! CANDIDATE_HTTP_STATUS=$(curl --retry 2 --retry-delay 2 --retry-all-errors -fsSL \
+		"${SUBSCRIPTION_UA_ARGS[@]}" -D "${SUBSCRIPTION_HEADERS}" -o "${SUBSCRIPTION_RAW}" \
+		-w '%{http_code}' --max-time 30 "${PROXY_SUBSCRIPTION_URL}"); then
+		echo "[WARN] Subscription candidate ${SUBSCRIPTION_UA_LABEL} failed (HTTP ${CANDIDATE_HTTP_STATUS:-ERR})"
+		continue
+	fi
+
+	SUBSCRIPTION_HTTP_STATUS="${CANDIDATE_HTTP_STATUS}"
 	SUBSCRIPTION_CONTENT_TYPE=$(awk 'BEGIN { IGNORECASE=1 } /^content-type:/ { sub(/^[^:]*:[[:space:]]*/, ""); print }' \
 		"${SUBSCRIPTION_HEADERS}" | tail -n 1 | tr -d '\r')
-	echo "[INFO] Subscription response content type: ${SUBSCRIPTION_CONTENT_TYPE:-unknown}"
+	SUBSCRIPTION_BYTES=$(wc -c < "${SUBSCRIPTION_RAW}" | tr -d '[:space:]')
+	echo "[INFO] Subscription candidate ${SUBSCRIPTION_UA_LABEL}: HTTP ${SUBSCRIPTION_HTTP_STATUS}, type ${SUBSCRIPTION_CONTENT_TYPE:-unknown}, bytes ${SUBSCRIPTION_BYTES}"
+	if (( SUBSCRIPTION_BYTES == 0 )); then
+		continue
+	fi
+
 	if grep -qE '^[[:space:]]*proxies[[:space:]]*:' "${SUBSCRIPTION_RAW}"; then
 		cp "${SUBSCRIPTION_RAW}" "${SUBSCRIPTION_FILE}"
 		SUBSCRIPTION_TYPE="file"
 		echo "[INFO] Subscription is Clash YAML, using local file provider"
-	elif python3 "${SCRIPT_DIR}/subscription_to_clash.py" "${SUBSCRIPTION_RAW}" > "${SUBSCRIPTION_FILE}.tmp"; then
+		break
+	fi
+	if python3 "${SCRIPT_DIR}/subscription_to_clash.py" "${SUBSCRIPTION_RAW}" > "${SUBSCRIPTION_FILE}.tmp"; then
 		mv "${SUBSCRIPTION_FILE}.tmp" "${SUBSCRIPTION_FILE}"
 		SUBSCRIPTION_TYPE="file"
 		PROXY_COUNT=$(grep -c '^  - name:' "${SUBSCRIPTION_FILE}" || true)
 		echo "[INFO] Converted subscription to Clash YAML (${PROXY_COUNT} proxies)"
-	else
-		echo "[WARN] Subscription format was not recognized; falling back to mihomo HTTP provider"
+		break
 	fi
-else
-	echo "[WARN] Failed to pre-download proxy subscription; falling back to mihomo HTTP provider"
+	echo "[WARN] Subscription candidate ${SUBSCRIPTION_UA_LABEL} has an unsupported format"
+done
+
+if [[ "${SUBSCRIPTION_TYPE}" != "file" ]]; then
+	echo "[WARN] No User-Agent returned a usable subscription; falling back to mihomo HTTP provider"
 fi
 
 FILTER_CONFIG=""
