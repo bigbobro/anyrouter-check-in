@@ -11,7 +11,9 @@ from __future__ import annotations
 
 import base64
 import json
+import re
 import sys
+from collections import Counter
 from urllib.parse import parse_qs, unquote, urlparse
 
 
@@ -158,10 +160,15 @@ def convert(raw: str) -> list[dict]:
 	"""把订阅原文转换为 Clash proxy 列表，无法识别的行跳过。"""
 	text = raw.strip()
 	if '://' not in text:
-		text = b64decode(text).decode('utf-8', errors='replace')
+		try:
+			text = b64decode(text).decode('utf-8', errors='replace')
+		except Exception:
+			print('[WARN] subscription_to_clash: content is neither share links nor base64', file=sys.stderr)
+			return []
 
 	proxies = []
 	errors = 0
+	unsupported: Counter[str] = Counter()
 	for line in text.splitlines():
 		line = line.strip()
 		if not line or '://' not in line:
@@ -169,13 +176,25 @@ def convert(raw: str) -> list[dict]:
 		scheme = line.split('://', 1)[0].lower()
 		parser = PARSERS.get(scheme)
 		if parser is None:
+			if re.fullmatch(r'[a-z][a-z0-9+.-]{0,31}', scheme):
+				unsupported[scheme] += 1
 			continue
 		try:
 			proxies.append(parser(line))
 		except Exception:
 			errors += 1
+	if unsupported:
+		details = ', '.join(f'{scheme}={count}' for scheme, count in sorted(unsupported.items())[:8])
+		print(f'[WARN] subscription_to_clash: unsupported schemes: {details}', file=sys.stderr)
 	if errors:
 		print(f'[WARN] subscription_to_clash: skipped {errors} unparseable link(s)', file=sys.stderr)
+	if not proxies and not unsupported and not errors:
+		content_kind = (
+			'html' if text.lstrip().startswith('<') else 'json' if text.lstrip().startswith(('{', '[')) else 'text'
+		)
+		print(
+			f'[WARN] subscription_to_clash: no share-link schemes found (content kind: {content_kind})', file=sys.stderr
+		)
 	return proxies
 
 

@@ -103,11 +103,12 @@ def test_parse_base64_subscription_blob():
 	assert [p['name'] for p in proxies] == ['node1', 'node2']
 
 
-def test_convert_skips_unknown_schemes_and_bad_lines():
+def test_convert_skips_and_reports_unknown_schemes_and_bad_lines(capsys):
 	text = 'http://not-a-proxy\nss://broken\nnot a link at all\n'
 	proxies = convert(text)
 
 	assert proxies == []
+	assert 'unsupported schemes: http=1' in capsys.readouterr().err
 
 
 def test_emit_yaml_produces_clash_compatible_block():
