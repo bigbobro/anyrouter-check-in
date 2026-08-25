@@ -48,6 +48,7 @@ ipv6: false
 mode: rule
 log-level: warning
 unified-delay: true
+external-controller: 127.0.0.1:9100
 
 proxy-providers:
   subscription:
@@ -64,7 +65,7 @@ proxy-groups:
   - name: CHECKIN
     type: url-test
     url: "${PROXY_TEST_URL}"
-    interval: 300
+    interval: 3600
     tolerance: 150
     lazy: false
 ${FILTER_CONFIG}
@@ -105,26 +106,48 @@ fi
 echo "[SUCCESS] Proxy is ready: ${PROXY_URL}"
 echo "[INFO] Proxy is scoped to CHECKIN_PROXY_URL (browser/python only, not global HTTP_PROXY)"
 
-# 打印出口 IP 归属（判断是否家宽）与订阅节点名，便于配置 PROXY_NODE_FILTER
+# 自动挑选能通过 AgentRouter WAF 的节点（机房 IP 会被滑块拦截，需逐个探测）
+MIHOMO_API="http://127.0.0.1:9100"
+PROBE_URL="${PROXY_PROBE_URL:-https://ps.air-outer.com/api/status}"
+if [[ -z "${PROXY_NODE_FILTER:-}" ]]; then
+	echo "[INFO] Probing subscription nodes against ${PROBE_URL} ..."
+	NODES=$(curl -fsS --max-time 5 "${MIHOMO_API}/proxies/CHECKIN" 2>/dev/null \
+		| python3 -c "import sys, json; print('\n'.join(json.load(sys.stdin).get('all') or []))" 2>/dev/null || true)
+	TOTAL=$(grep -c . <<<"${NODES}" || true)
+	echo "[INFO] Subscription provides ${TOTAL} node(s)"
+	CHOSEN=""
+	COUNT=0
+	while IFS= read -r node; do
+		[[ -z "${node}" ]] && continue
+		COUNT=$((COUNT + 1))
+		if (( COUNT > 30 )); then
+			echo "[INFO] Probe limit reached (30 nodes)"
+			break
+		fi
+		if ! curl -fsS --max-time 5 -X PUT -H 'Content-Type: application/json' \
+			-d "{\"name\":\"${node}\"}" "${MIHOMO_API}/proxies/CHECKIN" >/dev/null 2>&1; then
+			continue
+		fi
+		BODY=$(curl -fsS -x "${PROXY_URL}" --max-time 8 "${PROBE_URL}" 2>/dev/null || true)
+		if [[ -n "${BODY}" ]] && ! grep -q 'aliyun_waf' <<<"${BODY}" && grep -q '"success":true' <<<"${BODY}"; then
+			CHOSEN="${node}"
+			echo "[SUCCESS] Selected node that bypasses AgentRouter WAF: ${node}"
+			break
+		fi
+		echo "[INFO] Node ${COUNT}/${TOTAL} failed WAF probe: ${node}"
+	done <<<"${NODES}"
+	if [[ -z "${CHOSEN}" ]]; then
+		echo "[WARN] No subscription node bypassed AgentRouter WAF; keeping default selection"
+	fi
+else
+	echo "[INFO] PROXY_NODE_FILTER is set, skipping auto probe"
+fi
+
+# 打印出口 IP 归属（判断是否家宽），便于人工核对
 if EGRESS=$(curl -fsS -x "${PROXY_URL}" --max-time 15 "https://ipinfo.io/json" 2>/dev/null); then
 	echo "[INFO] Proxy egress info: ${EGRESS}"
 else
 	echo "[WARN] Failed to fetch proxy egress info"
-fi
-SUBSCRIPTION_FILE=""
-for candidate in ./subscription.yaml ./providers/subscription.yaml; do
-	if [[ -f "${candidate}" ]]; then
-		SUBSCRIPTION_FILE="${candidate}"
-		break
-	fi
-done
-if [[ -n "${SUBSCRIPTION_FILE}" ]]; then
-	NODE_COUNT=$(grep -cE '^\s*-\s*name:' "${SUBSCRIPTION_FILE}" || true)
-	echo "[INFO] Subscription nodes (${NODE_COUNT}):"
-	grep -oE '^\s*-\s*name:.*' "${SUBSCRIPTION_FILE}" | sed -E 's/^\s*-\s*name:\s*//' | head -50 || true
-else
-	echo "[WARN] Subscription file not found under ${PROXY_DIR}, cannot list node names"
-	ls -la "${PROXY_DIR}" || true
 fi
 
 if [[ -n "${GITHUB_ENV:-}" ]]; then
