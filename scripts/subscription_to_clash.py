@@ -155,17 +155,19 @@ PARSERS = {
 	'hysteria2': parse_hysteria2,
 }
 
+CLASH_PROXIES_RE = re.compile(r'(?m)^[ \t]*proxies[ \t]*:')
 
-def convert(raw: str) -> list[dict]:
-	"""把订阅原文转换为 Clash proxy 列表，无法识别的行跳过。"""
-	text = raw.strip()
-	if '://' not in text:
-		try:
-			text = b64decode(text).decode('utf-8', errors='replace')
-		except Exception:
-			print('[WARN] subscription_to_clash: content is neither share links nor base64', file=sys.stderr)
-			return []
 
+def decode_subscription(raw: str) -> str:
+	"""解码可能包裹了一层 base64 的订阅正文。"""
+	text = raw.strip().lstrip('\ufeff')
+	if '://' in text or CLASH_PROXIES_RE.search(text):
+		return text
+	return b64decode(text).decode('utf-8', errors='replace').lstrip('\ufeff')
+
+
+def _convert_text(text: str) -> list[dict]:
+	"""转换已解码的分享链接文本。"""
 	proxies = []
 	errors = 0
 	unsupported: Counter[str] = Counter()
@@ -198,6 +200,16 @@ def convert(raw: str) -> list[dict]:
 	return proxies
 
 
+def convert(raw: str) -> list[dict]:
+	"""把订阅原文转换为 Clash proxy 列表，无法识别的行跳过。"""
+	try:
+		text = decode_subscription(raw)
+	except Exception:
+		print('[WARN] subscription_to_clash: content is neither share links nor base64', file=sys.stderr)
+		return []
+	return _convert_text(text)
+
+
 def emit_yaml(proxies: list[dict]) -> str:
 	"""输出 block 风格 YAML（字符串用 JSON 双引号转义，兼容 YAML 1.2）。"""
 	lines = ['proxies:']
@@ -209,17 +221,30 @@ def emit_yaml(proxies: list[dict]) -> str:
 	return '\n'.join(lines) + '\n'
 
 
+def to_clash_yaml(raw: str) -> str | None:
+	"""输出可供 mihomo 使用的 Clash YAML，已有配置则保留原文。"""
+	try:
+		text = decode_subscription(raw)
+	except Exception:
+		print('[WARN] subscription_to_clash: content is neither share links nor base64', file=sys.stderr)
+		return None
+	if CLASH_PROXIES_RE.search(text):
+		return text.rstrip() + '\n'
+	proxies = _convert_text(text)
+	return emit_yaml(proxies) if proxies else None
+
+
 def main() -> int:
 	if len(sys.argv) != 2:
 		print('usage: subscription_to_clash.py <raw subscription file>', file=sys.stderr)
 		return 2
 	with open(sys.argv[1], encoding='utf-8', errors='replace') as f:
 		raw = f.read()
-	proxies = convert(raw)
-	if not proxies:
+	yaml_text = to_clash_yaml(raw)
+	if yaml_text is None:
 		print('[WARN] subscription_to_clash: no proxies parsed', file=sys.stderr)
 		return 1
-	print(emit_yaml(proxies), end='')
+	print(yaml_text, end='')
 	return 0
 
 

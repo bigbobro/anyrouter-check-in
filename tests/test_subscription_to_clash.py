@@ -5,7 +5,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / 'scripts'))
 
-from subscription_to_clash import convert, emit_yaml
+from subscription_to_clash import convert, emit_yaml, to_clash_yaml
 
 
 def test_parse_ss_sip002_link():
@@ -101,6 +101,13 @@ def test_parse_base64_subscription_blob():
 	proxies = convert(blob)
 
 	assert [p['name'] for p in proxies] == ['node1', 'node2']
+
+
+def test_preserve_base64_wrapped_clash_yaml():
+	yaml_text = 'proxies:\n  - name: node1\n    type: ss\n'
+	blob = base64.b64encode(yaml_text.encode()).decode()
+
+	assert to_clash_yaml(blob) == yaml_text
 
 
 def test_convert_skips_and_reports_unknown_schemes_and_bad_lines(capsys):
