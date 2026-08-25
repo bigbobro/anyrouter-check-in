@@ -18,9 +18,9 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 
 def b64decode(data: str) -> bytes:
-	"""兼容 URL-safe 与缺失 padding 的 base64。"""
-	data = data.strip().replace('-', '+').replace('_', '/')
-	return base64.b64decode(data + '=' * (-len(data) % 4))
+	"""兼容 URL-safe、换行与缺失 padding 的 base64。"""
+	data = ''.join(data.split()).replace('-', '+').replace('_', '/')
+	return base64.b64decode(data + '=' * (-len(data) % 4), validate=True)
 
 
 def parse_ss(line: str) -> dict:
@@ -163,7 +163,28 @@ def decode_subscription(raw: str) -> str:
 	text = raw.strip().lstrip('\ufeff')
 	if '://' in text or CLASH_PROXIES_RE.search(text):
 		return text
-	return b64decode(text).decode('utf-8', errors='replace').lstrip('\ufeff')
+	return b64decode(text).decode('utf-8').lstrip('\ufeff')
+
+
+def content_summary(text: str) -> str:
+	"""返回不含订阅正文、节点或凭据的格式摘要。"""
+	stripped = text.strip().lstrip('\ufeff')
+	lower = stripped.lower()
+	if not stripped:
+		kind = 'empty'
+	elif stripped.startswith('<'):
+		kind = 'html'
+	elif stripped.startswith(('{', '[')):
+		kind = 'json'
+	elif CLASH_PROXIES_RE.search(stripped):
+		kind = 'clash-yaml'
+	elif '[proxy]' in lower:
+		kind = 'surge-config'
+	elif any(marker in lower for marker in ('unauthorized', 'forbidden', 'invalid', 'expired', 'not found')):
+		kind = 'error-text'
+	else:
+		kind = 'text'
+	return f'kind={kind}, chars={len(stripped)}, lines={len(stripped.splitlines())}'
 
 
 def _convert_text(text: str) -> list[dict]:
@@ -191,12 +212,7 @@ def _convert_text(text: str) -> list[dict]:
 	if errors:
 		print(f'[WARN] subscription_to_clash: skipped {errors} unparseable link(s)', file=sys.stderr)
 	if not proxies and not unsupported and not errors:
-		content_kind = (
-			'html' if text.lstrip().startswith('<') else 'json' if text.lstrip().startswith(('{', '[')) else 'text'
-		)
-		print(
-			f'[WARN] subscription_to_clash: no share-link schemes found (content kind: {content_kind})', file=sys.stderr
-		)
+		print(f'[WARN] subscription_to_clash: no share-link schemes found ({content_summary(text)})', file=sys.stderr)
 	return proxies
 
 
@@ -205,7 +221,10 @@ def convert(raw: str) -> list[dict]:
 	try:
 		text = decode_subscription(raw)
 	except Exception:
-		print('[WARN] subscription_to_clash: content is neither share links nor base64', file=sys.stderr)
+		print(
+			f'[WARN] subscription_to_clash: content is neither share links nor base64 ({content_summary(raw)})',
+			file=sys.stderr,
+		)
 		return []
 	return _convert_text(text)
 
@@ -226,7 +245,10 @@ def to_clash_yaml(raw: str) -> str | None:
 	try:
 		text = decode_subscription(raw)
 	except Exception:
-		print('[WARN] subscription_to_clash: content is neither share links nor base64', file=sys.stderr)
+		print(
+			f'[WARN] subscription_to_clash: content is neither share links nor base64 ({content_summary(raw)})',
+			file=sys.stderr,
+		)
 		return None
 	if CLASH_PROXIES_RE.search(text):
 		return text.rstrip() + '\n'

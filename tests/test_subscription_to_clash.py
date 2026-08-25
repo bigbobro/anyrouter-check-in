@@ -110,6 +110,11 @@ def test_preserve_base64_wrapped_clash_yaml():
 	assert to_clash_yaml(blob) == yaml_text
 
 
+def test_reject_non_base64_text_without_leaking_content(capsys):
+	assert to_clash_yaml('private subscription response!') is None
+	assert 'kind=text, chars=30, lines=1' in capsys.readouterr().err
+
+
 def test_convert_skips_and_reports_unknown_schemes_and_bad_lines(capsys):
 	text = 'http://not-a-proxy\nss://broken\nnot a link at all\n'
 	proxies = convert(text)

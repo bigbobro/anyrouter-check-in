@@ -39,15 +39,19 @@ chmod +x "mihomo-linux-amd64-${MIHOMO_VERSION}"
 MIHOMO_BIN="${PROXY_DIR}/mihomo-linux-amd64-${MIHOMO_VERSION}"
 
 SUBSCRIPTION_RAW="${PROXY_DIR}/subscription.raw"
+SUBSCRIPTION_HEADERS="${PROXY_DIR}/subscription.headers"
 SUBSCRIPTION_FILE="${PROXY_DIR}/subscription.yaml"
 SUBSCRIPTION_TYPE="http"
 SUBSCRIPTION_HTTP_STATUS="ERR"
 
 echo "[INFO] Downloading proxy subscription for format detection..."
 if SUBSCRIPTION_HTTP_STATUS=$(curl --retry 3 --retry-delay 5 --retry-all-errors -fsSL \
-	-A 'clash.meta' -o "${SUBSCRIPTION_RAW}" -w '%{http_code}' --max-time 30 \
+	-A 'clash.meta' -D "${SUBSCRIPTION_HEADERS}" -o "${SUBSCRIPTION_RAW}" -w '%{http_code}' --max-time 30 \
 	"${PROXY_SUBSCRIPTION_URL}"); then
 	echo "[INFO] Subscription URL HTTP status: ${SUBSCRIPTION_HTTP_STATUS}"
+	SUBSCRIPTION_CONTENT_TYPE=$(awk 'BEGIN { IGNORECASE=1 } /^content-type:/ { sub(/^[^:]*:[[:space:]]*/, ""); print }' \
+		"${SUBSCRIPTION_HEADERS}" | tail -n 1 | tr -d '\r')
+	echo "[INFO] Subscription response content type: ${SUBSCRIPTION_CONTENT_TYPE:-unknown}"
 	if grep -qE '^[[:space:]]*proxies[[:space:]]*:' "${SUBSCRIPTION_RAW}"; then
 		cp "${SUBSCRIPTION_RAW}" "${SUBSCRIPTION_FILE}"
 		SUBSCRIPTION_TYPE="file"
