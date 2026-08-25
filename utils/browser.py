@@ -584,6 +584,8 @@ async def solve_waf_slider(page: Page, max_retries: int = 3) -> bool:
 				except Exception:  # nosec B110
 					pass
 				await asyncio.sleep(3)
+				# WAF 通过后页面会自动 reload 原地址，SPA 资源经代理加载较慢，多等一会
+				await _wait_for_optional_load_state(page, 'networkidle', 30_000)
 				return True
 
 			refreshed = False
@@ -630,8 +632,24 @@ async def solve_waf_slider(page: Page, max_retries: int = 3) -> bool:
 	return False
 
 
+def _attach_network_debug_logging(page: Page) -> None:
+	"""DEBUG_MODE 下记录失败请求与 4xx/5xx 响应，定位 SPA 资源加载问题。"""
+
+	def on_request_failed(request) -> None:
+		debug_print(f'[NET] Request failed: {request.method} {request.url} - {request.failure}')
+
+	def on_response(response) -> None:
+		if response.status >= 400:
+			debug_print(f'[NET] HTTP {response.status}: {response.url}')
+
+	page.on('requestfailed', on_request_failed)
+	page.on('response', on_response)
+
+
 async def prepare_browser_page(page: Page) -> None:
 	await setup_popup_guard(page)
+	if is_debug_enabled():
+		_attach_network_debug_logging(page)
 
 
 async def wait_for_site_ready(page: Page, timeout_ms: int = WAF_READY_TIMEOUT_MS) -> None:
@@ -694,7 +712,7 @@ async def navigate_login_page(
 		print(f'[INFO] Navigating login page (attempt {attempt + 1}/3): {login_url}')
 		await page.goto(login_url, wait_until='load', timeout=attempt_timeout)
 		await _settle_page(page, 5, 20_000)
-		await solve_waf_slider(page)
+		slider_solved = await solve_waf_slider(page)
 
 		if await _wait_for_login_shell(page, attempt_timeout):
 			await wait_for_site_ready(page, timeout_ms)
@@ -703,6 +721,7 @@ async def navigate_login_page(
 
 		# 如果一次没好，再次尝试滑块处理
 		if await solve_waf_slider(page):
+			slider_solved = True
 			if await _wait_for_login_shell(page, attempt_timeout):
 				await wait_for_site_ready(page, timeout_ms)
 				if await page.evaluate(_LOGIN_SHELL_READY_JS):
@@ -712,12 +731,17 @@ async def navigate_login_page(
 		await _log_login_page_state(page)
 		if provider and account_name:
 			await save_login_screenshot(page, provider, account_name, f'login-shell-attempt-{attempt + 1}')
-		if attempt < 2:
+		if attempt < 2 or slider_solved:
+			# 滑块刚通过时 WAF cookie 已种下，reload 后 SPA 应能快速渲染，多给一次机会
 			await asyncio.sleep(5)
 			try:
 				await page.reload(wait_until='load', timeout=attempt_timeout)
 			except Exception:  # nosec B110
 				pass
+			if slider_solved and await _wait_for_login_shell(page, min(attempt_timeout, 45_000)):
+				await wait_for_site_ready(page, timeout_ms)
+				if await page.evaluate(_LOGIN_SHELL_READY_JS):
+					return
 
 	raise TimeoutError(f'Login page never rendered: {login_url}')
 
