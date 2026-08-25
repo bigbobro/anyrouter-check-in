@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import math
 import os
 import random
 import re
@@ -12,6 +11,9 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
+
+from cloakbrowser.human.config import resolve_config
+from cloakbrowser.human.mouse_async import async_human_move
 
 from utils.debug import debug_print, is_debug_enabled
 from utils.popups import dismiss_popups, setup_popup_guard
@@ -531,35 +533,21 @@ async def solve_waf_slider(page: Page, max_retries: int = 3) -> bool:
 		)
 
 		try:
-			# 先沿弧线接近手柄，模拟真人移动鼠标
-			approach_steps = random.randint(6, 10)
-			for i in range(1, approach_steps + 1):
-				prog = i / approach_steps
-				cur_x = start_x * prog + random.uniform(-2, 2)
-				cur_y = start_y * prog + random.uniform(-2, 2)
-				await page.mouse.move(cur_x, cur_y)
-				await asyncio.sleep(random.uniform(0.01, 0.03))
-			await page.mouse.move(start_x, start_y)
-			await asyncio.sleep(random.uniform(0.2, 0.4))
+			# 从随机起点沿贝塞尔曲线接近手柄，模拟真人移动鼠标
+			cfg = resolve_config('careful')
+			pre_x = max(10.0, start_x - random.uniform(150, 500))
+			pre_y = max(10.0, start_y + random.uniform(-150, 150))
+			await page.mouse.move(pre_x, pre_y)
+			await asyncio.sleep(random.uniform(0.3, 0.8))
+			await async_human_move(page.mouse, pre_x, pre_y, start_x, start_y, cfg)
+			await asyncio.sleep(random.uniform(0.15, 0.35))
+
+			# 按住后拖满全程并稍微过冲（轨道末端会被 DOM 钳位）
 			await page.mouse.down()
-			await asyncio.sleep(random.uniform(0.08, 0.15))
-
-			# 拖满全程并稍微过冲（轨道末端会被 DOM 钳位），中途带微停顿
+			await asyncio.sleep(random.uniform(0.1, 0.25))
 			target = distance + random.uniform(3, 8)
-			steps = random.randint(48, 64)
-			pause_at = {random.randint(8, steps - 8) for _ in range(2)}
-			for i in range(1, steps + 1):
-				prog = i / steps
-				ease = (1.0 - math.cos(prog * math.pi)) / 2.0
-				cur_x = start_x + target * ease + random.uniform(-0.4, 0.4)
-				cur_y = start_y + math.sin(prog * math.pi * 2) * random.uniform(0.3, 1.0)
-				await page.mouse.move(cur_x, cur_y)
-				await asyncio.sleep(random.uniform(0.015, 0.03))
-				if i in pause_at:
-					await asyncio.sleep(random.uniform(0.05, 0.12))
-
-			await page.mouse.move(start_x + target, start_y)
-			await asyncio.sleep(random.uniform(0.4, 0.7))
+			await async_human_move(page.mouse, start_x, start_y, start_x + target, start_y, cfg)
+			await asyncio.sleep(random.uniform(0.4, 0.8))
 			await page.mouse.up()
 
 			await asyncio.sleep(3)
